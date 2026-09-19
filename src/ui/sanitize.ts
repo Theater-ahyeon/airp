@@ -32,9 +32,10 @@ export function sanitizeHtml(dirty: string): string {
     return purifier.sanitize(dirty, {
       ALLOWED_TAGS: [
         "b", "i", "em", "strong", "a", "p", "br", "code", "pre",
-        "ul", "ol", "li", "span", "blockquote", "h1", "h2", "h3", "h4"
+        "ul", "ol", "li", "span", "blockquote", "h1", "h2", "h3", "h4",
+        "div", "table", "thead", "tbody", "tr", "th", "td", "style", "hr"
       ],
-      ALLOWED_ATTR: ["href", "target", "class", "rel"],
+      ALLOWED_ATTR: ["href", "target", "class", "rel", "style", "id"],
     });
   }
   return dirty

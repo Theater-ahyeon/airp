@@ -8,7 +8,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChatFloor, SessionState, CardListItem, SessionTreeProjection } from "./types.js";
 import { sanitizeHtml } from "./sanitize.js";
 import { AIRPEventSourceClient } from "./sse-client.js";
-
+import { RegexPipeline, type StRegexScript } from "../core/pipeline/regex-pipeline.js";
 // ---------------------------------------------------------------------------
 // API 客户端：token 从 URL ?token= 取，请求头携带
 // ---------------------------------------------------------------------------
@@ -52,15 +52,15 @@ export const App: React.FC = () => {
   // 会话状态
   const [session, setSession] = useState<SessionState>({
     cardId: "",
+    sessionId: "",
     cardName: "",
     cardSubtitle: "",
-    sessionId: "",
-    sessionTitle: "未连接会话",
+    sessionTitle: "请选择角色卡",
     sessionBranch: "main",
     floors: [],
     currentState: {},
     rollingSummary: null,
-    summaryCoverage: "—",
+    summaryCoverage: "无摘要",
     cacheHitRate: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -73,9 +73,9 @@ export const App: React.FC = () => {
   const [inputText, setInputText] = useState("");
   const [editingFloorId, setEditingFloorId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [regexScripts, setRegexScripts] = useState<StRegexScript[]>([]);
   const [generating, setGenerating] = useState(false);
   const [streamText, setStreamText] = useState("");
-
   const sseRef = useRef<AIRPEventSourceClient | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -152,6 +152,14 @@ export const App: React.FC = () => {
           // 持久化失败不阻断
         }
         setSession((prev) => ({ ...prev, cardId: card.cardId, sessionId }));
+        // 读取卡内 ST 正则脚本用于展示侧渲染
+        api<any>(`/api/cards/${encodeURIComponent(card.cardId)}/st-original`)
+          .then((orig) => {
+            const scripts = orig?.data?.extensions?.regex_scripts;
+            if (Array.isArray(scripts)) setRegexScripts(scripts);
+            else setRegexScripts([]);
+          })
+          .catch(() => setRegexScripts([]));
         await refreshSession(card.cardId, sessionId, card.name);
       } catch (err) {
         setConnError(String((err as Error).message ?? err));
@@ -580,7 +588,14 @@ export const App: React.FC = () => {
                           ) : (
                             <div
                               className="pl-9.5 text-[15px] leading-7 text-[#0D0D0D] space-y-2"
-                              dangerouslySetInnerHTML={{ __html: sanitizeHtml(floor.content) }}
+                              dangerouslySetInnerHTML={{
+                                __html: sanitizeHtml(
+                                  new RegexPipeline(regexScripts).process(floor.content, {
+                                    side: "display",
+                                    placement: 2
+                                  })
+                                )
+                              }}
                             />
                           )}
 

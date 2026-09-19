@@ -93,4 +93,13 @@ describe("Frontend Security: DOMPurify Sanitize", () => {
     expect(out).toBe(mixed);
     expect(out).toContain('<a href="https://example.com">链接</a>');
   });
+
+  it("P2 扩展标签保全：允许 div、table、style 作用域用于状态栏与卡内组件展示", () => {
+    const tableAndDiv = '<div class="status-panel"><table style="color: red;"><tbody><tr><td>HP</td><td>100</td></tr></tbody></table></div>';
+    const out = sanitizeHtml(tableAndDiv);
+    expect(out).toContain('<div class="status-panel">');
+    expect(out).toContain('<table style="color: red;">');
+    expect(out).toContain('<td>HP</td>');
+    expect(out).toContain('<td>100</td>');
+  });
 });

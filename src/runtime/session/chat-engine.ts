@@ -11,6 +11,7 @@ import type {
   StartRunInput,
 } from "../contracts.js";
 import { AssemblyPipeline } from "../../core/pipeline/assembly-pipeline.js";
+import { RegexPipeline, type StRegexScript } from "../../core/pipeline/regex-pipeline.js";
 import { ButlerService } from "../../core/butler/butler.js";
 import type { ButlerInspectionInput, ButlerInspectionOutput } from "../../core/butler/contracts.js";
 import type { MockModelAdapter } from "../../core/adapters/mock-model.js";
@@ -139,17 +140,32 @@ export class ChatEngine implements ChatEngineFacade {
       content: input.prompt
     });
     const userFloorId = userFloor.payload.floorId;
-
-    // 2. 组装上下文：卡片 + 世界书 + 楼层历史 + 状态 + 摘要
-    const [card, replayRes, worldbook] = await Promise.all([
+    // 2. 组装上下文：卡片 + 世界书 + 楼层历史 + 状态 + 摘要 + ST 原版正则
+    const [card, replayRes, worldbook, stOriginal] = await Promise.all([
       this.cardStore.readCard(input.cardId),
       this.cardStore.replay(input.cardId, input.sessionId),
-      this.cardStore.readWorldbook(input.cardId)
+      this.cardStore.readWorldbook(input.cardId),
+      this.cardStore.readStOriginal(input.cardId)
     ]);
     const characterCard = createCharacterCard(input.cardId, card.workingCopy);
-    const floors = Object.values(replayRes.tree.floors)
+    let floors = Object.values(replayRes.tree.floors)
       .filter((f) => f.branchId === replayRes.tree.activeBranchId)
       .sort((a, b) => a.floorIndex - b.floorIndex);
+
+    // 若卡内含 ST 正则脚本，应用 prompt 侧正则管线（剥离状态栏占位等，稳定模型上下文）
+    const regexScripts = (stOriginal as { data?: { extensions?: { regex_scripts?: StRegexScript[] } } })
+      ?.data?.extensions?.regex_scripts;
+    if (Array.isArray(regexScripts) && regexScripts.length > 0) {
+      const promptPipeline = new RegexPipeline(regexScripts);
+      floors = floors.map((f, idx) => {
+        const depth = floors.length - 1 - idx;
+        const placement = f.role === "user" ? 1 : 2;
+        return {
+          ...f,
+          content: promptPipeline.process(f.content, { side: "prompt", placement, depth })
+        };
+      });
+    }
 
     const assembled = this.pipeline.assemble({
       character: characterCard,
