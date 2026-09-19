@@ -1,0 +1,9 @@
+{
+  "name": "airp-spike-pi-ai-standalone",
+  "private": true,
+  "type": "module",
+  "description": "Spike 0.1: verify @earendil-works/pi-ai usable standalone as AIRP ModelPort",
+  "dependencies": {
+    "@earendil-works/pi-ai": "latest"
+  }
+}

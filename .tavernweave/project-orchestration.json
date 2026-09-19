@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "authoritySchema": "tavernweave/project-orchestration/v1",
+  "projectId": "airp",
+  "title": "AIRP — 酒馆生态的记忆引擎",
+  "profile": "single-blueprint",
+  "state": "driver-approved-design",
+  "authorityFile": "总设计案.md",
+  "nextFile": "NEXT.md",
+  "blueprintPolicy": {
+    "masterFile": "项目实现步骤蓝图.md",
+    "maxDepth": 1,
+    "maxChildren": 0,
+    "runtimePersistentBlueprintBudget": 0,
+    "blueprints": [
+      {
+        "id": "BP-ROOT",
+        "path": "项目实现步骤蓝图.md",
+        "parentId": null,
+        "depth": 1,
+        "status": "driver-approved"
+      }
+    ]
+  },
+  "runtimeRefinementPolicy": {
+    "trigger": "observed-problem-or-failed-exit-condition",
+    "maxDepth": 1,
+    "maxOpenBranches": 1,
+    "persistent": false,
+    "mayExpandProductScope": false,
+    "mustReturnToParent": true
+  },
+  "runtimeRefinements": [],
+  "discussionDirections": [
+    {
+      "id": "dir-1",
+      "topic": "项目定位与承载面",
+      "level": "foundational",
+      "roundLimit": 4,
+      "roundsUsed": 2,
+      "status": "frozen",
+      "decisionIds": [
+        "独立叙事应用",
+        "方案B本地应用",
+        "无复用资产"
+      ]
+    },
+    {
+      "id": "dir-2",
+      "topic": "技术基座与架构",
+      "level": "foundational",
+      "roundLimit": 4,
+      "roundsUsed": 2,
+      "status": "frozen",
+      "decisionIds": [
+        "pi-ai仅provider层",
+        "TauriTavern仅概念参考",
+        "MIT许可证"
+      ]
+    },
+    {
+      "id": "dir-3",
+      "topic": "核心循环与首版",
+      "level": "core",
+      "roundLimit": 3,
+      "roundsUsed": 3,
+      "status": "frozen",
+      "decisionIds": [
+        "记忆c+a主干",
+        "后台管家",
+        "转译优先MVU策略",
+        "T4红线"
+      ]
+    },
+    {
+      "id": "dir-4",
+      "topic": "对抗审查修正",
+      "level": "core",
+      "roundLimit": 3,
+      "roundsUsed": 2,
+      "status": "frozen",
+      "decisionIds": [
+        "swipe进首版",
+        "管家一致性协议",
+        "降级阶梯",
+        "摘要懒重算",
+        "三件套先行",
+        "存储地基",
+        "记忆评估套件",
+        "安全红线"
+      ]
+    },
+    {
+      "id": "dir-5",
+      "topic": "生态兼容与参考项目综合",
+      "level": "foundational",
+      "roundLimit": 4,
+      "roundsUsed": 3,
+      "status": "frozen",
+      "decisionIds": [
+        "四层生态架构",
+        "PolyForm-NC许可证",
+        "JSONL一卡一目录",
+        "世界书双模",
+        "遗忘与复盘",
+        "四件套缓存感知",
+        "内置插件原则",
+        "生成生命周期reattach",
+        "13项修订全批准"
+      ]
+    }
+  ],
+  "frontendDecision": {
+    "recommended": "independent-ui",
+    "fit": "suitable",
+    "reason": "独立叙事应用；万楼虚拟化与社区贡献者生态；非酒馆宿主，同层/嵌入不适用",
+    "fallback": "text-first",
+    "reopenWhen": "桌面打包或移动端进入 Growth Tracks 时重审",
+    "driverOverride": false,
+    "prototypeGateRequired": true,
+    "realHostGateRequired": true
+  },
+  "acceptance": {
+    "automated": "not-run",
+    "staticPreview": "not-run",
+    "realHost": "pending",
+    "driver": {
+      "status": "pending",
+      "source": "driver"
+    }
+  }
+}
