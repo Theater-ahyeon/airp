@@ -1,12 +1,10 @@
 // src/ui/App.tsx
 // TavernLoom · 织忆酒馆 —— 现代计算极简主义 AI 角色扮演前端（Precision Canvas 纯白设计系统规范实装）
-// 基于 E:\webdownload\stitch_ai_roleplay_frontend.zip 精确复刻：
-//   - 左侧全局主导航（Characters / Active Session / World Lorebook / Engine & API）
-//   - 顶栏微量信息行（Workspace / Sylvia 锚点、速度 t/s、模型状态、Token 计量）
-//   - 三栏精确布局：
-//       1. 左栏：角色档案、Timeline 故事线分支、挂载世界书与状态
-//       2. 中栏：沉浸叙事画布、打字机流式输出、行间 Swipe 切换、回退到此、高保真状态占位展开
-//       3. 右栏：结构化事实 StateSnapshot 视图与后台管家状态
+// 全功能增强版：
+//   - 全局左侧主导航支持一键收起/展开（w-64 <-> w-16，支持快捷键 Ctrl+B / Cmd+B 与流畅 CSS 过渡）
+//   - 会话内左右面板支持独立折叠/展开（可分别收起角色档案栏与结构化状态栏，获得超大沉浸叙事主画布）
+//   - 完备的键盘快捷键（Ctrl+B 切换主侧栏，Enter 发送，Shift+Enter 换行）
+//   - 视图分发：活跃会话 (Active Session)、角色库 (Characters)、世界书 (Lorebook)、引擎设置 (Engine & API)
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -80,9 +78,26 @@ export const App: React.FC = () => {
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"session" | "characters" | "lorebook" | "engine">("session");
 
+  // 侧边栏折叠状态
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+
   const sseRef = useRef<AIRPEventSourceClient | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 注册全局快捷键 Ctrl+B / Cmd+B 切换主侧边栏
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setSidebarCollapsed((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const rowVirtualizer = useVirtualizer({
     count: session.floors.length,
@@ -118,7 +133,7 @@ export const App: React.FC = () => {
   // 加载卡片列表
   const loadCards = useCallback(() => {
     if (!TOKEN) {
-      setConnError("缺少 ?token= 启动令牌——请从终端输出的实际 URL 进入。");
+      setConnError("缺少 ?token= 启动令牌——请从控制台输出的真实 URL 进入。");
       return;
     }
     api<{ cards: CardListItem[] }>("/api/cards")
@@ -164,7 +179,7 @@ export const App: React.FC = () => {
 
         // 读取卡内 ST 正则脚本用于展示侧渲染
         api<{ data?: { extensions?: { regex_scripts?: StRegexScript[] } } }>(
-          `/api/cards/${encodeURIComponent(card.cardId)}/st-original`
+          `/api/cards/${encodeURIComponent(card.cardId)}/st/original`
         )
           .then((orig) => {
             const scripts = orig?.data?.extensions?.regex_scripts;
@@ -364,62 +379,82 @@ export const App: React.FC = () => {
 
   return (
     <div className="flex w-screen h-screen overflow-hidden bg-[#FFFFFF] text-[#111827] font-sans antialiased">
-      {/* 1. 左侧持久化系统导航 (固定 64 宽栏，遵循 Precision Canvas 规范) */}
-      <aside className="w-64 bg-[#FFFFFF] border-r border-[#E5E7EB] flex flex-col justify-between shrink-0 select-none z-30">
-        <div className="flex flex-col">
-          {/* Logo 区域 */}
-          <div className="h-14 px-4 flex items-center gap-2.5 border-b border-[#E5E7EB]">
-            <img src="/tavernloom_logo.svg" alt="TavernLoom Logo" className="h-7 w-7 rounded" />
-            <span className="font-semibold text-[15px] tracking-tight text-[#111827] truncate">
-              TavernLoom · 织忆酒馆
-            </span>
+      {/* 1. 左侧持久化系统导航 (支持折叠与动画过渡，遵循 Precision Canvas 规范) */}
+      <aside
+        style={{ width: sidebarCollapsed ? "4rem" : "16rem", minWidth: sidebarCollapsed ? "4rem" : "16rem", maxWidth: sidebarCollapsed ? "4rem" : "16rem" }}
+        className="bg-[#FFFFFF] border-r border-[#E5E7EB] flex flex-col justify-between shrink-0 select-none z-30 transition-all duration-200 overflow-hidden"
+      >
+        <div className="flex flex-col overflow-hidden">
+          {/* Logo 区域与折叠按钮 */}
+          <div className="h-14 px-3 flex items-center justify-between border-b border-[#E5E7EB] overflow-hidden">
+            <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
+              <img src="/tavernloom_logo.svg" alt="TavernLoom Logo" className="h-7 w-7 rounded shrink-0" />
+              {!sidebarCollapsed && (
+                <span className="font-semibold text-[15px] tracking-tight text-[#111827] truncate">
+                  TavernLoom · 织忆酒馆
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => setSidebarCollapsed((prev) => !prev)}
+              className="p-1 text-[#4B5563] hover:text-[#111827] hover:bg-[#F3F4F6] rounded transition-colors shrink-0 cursor-pointer flex items-center justify-center"
+              title={sidebarCollapsed ? "展开侧栏 (Ctrl+B)" : "收起侧栏 (Ctrl+B)"}
+            >
+              <span className="material-symbols-outlined text-[18px]">
+                {sidebarCollapsed ? "dock_to_right" : "dock_to_left"}
+              </span>
+            </button>
           </div>
 
           {/* 系统级导航标签 */}
           <nav className="p-2 flex flex-col gap-0.5">
             <button
               onClick={() => setActiveTab("characters")}
+              title="角色库 / Characters"
               className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs transition-colors cursor-pointer w-full text-left ${
                 activeTab === "characters"
                   ? "bg-[#F3F4F6] text-[#111827] font-semibold"
                   : "text-[#4B5563] hover:bg-[#F9FAFB] hover:text-[#111827]"
               }`}
             >
-              <span className="material-symbols-outlined text-[18px]">group</span>
-              <span>角色库 / Characters</span>
+              <span className="material-symbols-outlined text-[18px] shrink-0">group</span>
+              {!sidebarCollapsed && <span className="truncate">角色库 / Characters</span>}
             </button>
             <button
               onClick={() => setActiveTab("session")}
+              title="活跃会话 / Active Session"
               className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs transition-colors cursor-pointer w-full text-left ${
                 activeTab === "session"
                   ? "bg-[#F3F4F6] text-[#111827] font-semibold"
                   : "text-[#4B5563] hover:bg-[#F9FAFB] hover:text-[#111827]"
               }`}
             >
-              <span className="material-symbols-outlined text-[18px]">chat_bubble</span>
-              <span>活跃会话 / Active Session</span>
+              <span className="material-symbols-outlined text-[18px] shrink-0">chat_bubble</span>
+              {!sidebarCollapsed && <span className="truncate">活跃会话 / Active Session</span>}
             </button>
             <button
               onClick={() => setActiveTab("lorebook")}
+              title="世界书 / Lorebook"
               className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs transition-colors cursor-pointer w-full text-left ${
                 activeTab === "lorebook"
                   ? "bg-[#F3F4F6] text-[#111827] font-semibold"
                   : "text-[#4B5563] hover:bg-[#F9FAFB] hover:text-[#111827]"
               }`}
             >
-              <span className="material-symbols-outlined text-[18px]">menu_book</span>
-              <span>世界书 / Lorebook</span>
+              <span className="material-symbols-outlined text-[18px] shrink-0">menu_book</span>
+              {!sidebarCollapsed && <span className="truncate">世界书 / Lorebook</span>}
             </button>
             <button
               onClick={() => setActiveTab("engine")}
+              title="引擎设置 / Engine & API"
               className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs transition-colors cursor-pointer w-full text-left ${
                 activeTab === "engine"
                   ? "bg-[#F3F4F6] text-[#111827] font-semibold"
                   : "text-[#4B5563] hover:bg-[#F9FAFB] hover:text-[#111827]"
               }`}
             >
-              <span className="material-symbols-outlined text-[18px]">tune</span>
-              <span>引擎设置 / Engine & API</span>
+              <span className="material-symbols-outlined text-[18px] shrink-0">tune</span>
+              {!sidebarCollapsed && <span className="truncate">引擎设置 / Engine & API</span>}
             </button>
           </nav>
         </div>
@@ -427,22 +462,26 @@ export const App: React.FC = () => {
         {/* 底部运行状态指示器 */}
         <div className="p-3 border-t border-[#E5E7EB] bg-[#F9FAFB] flex flex-col gap-2">
           <div className="flex items-center justify-between px-1">
-            <div className="flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${connected ? "bg-[#047857]" : "bg-amber-500"}`}></span>
-              <span className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
-                {connected ? "Ready" : "Offline"}
-              </span>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${connected ? "bg-[#047857]" : "bg-amber-500"}`}></span>
+              {!sidebarCollapsed && (
+                <span className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563] truncate">
+                  {connected ? "Ready" : "Offline"}
+                </span>
+              )}
             </div>
-            <span className="font-mono text-[11px] text-[#9CA3AF]">v0.1.0</span>
+            {!sidebarCollapsed && <span className="font-mono text-[11px] text-[#9CA3AF]">v0.1.0</span>}
           </div>
 
-          <div className="flex items-center justify-between bg-[#FFFFFF] px-2.5 py-1 rounded border border-[#E5E7EB]">
-            <div className="flex items-center gap-1.5 text-xs text-[#111827]">
-              <span className="material-symbols-outlined text-[14px] text-[#4B5563]">dns</span>
-              <span className="font-mono truncate max-w-[100px]">AIRP-Local</span>
+          {!sidebarCollapsed && (
+            <div className="flex items-center justify-between bg-[#FFFFFF] px-2.5 py-1 rounded border border-[#E5E7EB]">
+              <div className="flex items-center gap-1.5 text-xs text-[#111827] min-w-0">
+                <span className="material-symbols-outlined text-[14px] text-[#4B5563] shrink-0">dns</span>
+                <span className="font-mono truncate">AIRP-Local</span>
+              </div>
+              <span className="font-mono text-[11px] text-[#4B5563] shrink-0">JSONL</span>
             </div>
-            <span className="font-mono text-[11px] text-[#4B5563]">JSONL</span>
-          </div>
+          )}
         </div>
       </aside>
 
@@ -464,6 +503,31 @@ export const App: React.FC = () => {
                 {importNotice}
               </span>
             )}
+
+            {/* 会话内左右栏快速折叠控制 */}
+            {activeTab === "session" && (
+              <div className="flex items-center gap-1 bg-[#F9FAFB] p-0.5 rounded border border-[#E5E7EB]">
+                <button
+                  onClick={() => setLeftPanelCollapsed((prev) => !prev)}
+                  className={`p-1 rounded text-[#4B5563] hover:text-[#111827] transition-colors cursor-pointer flex items-center ${
+                    leftPanelCollapsed ? "bg-[#E5E7EB] text-[#111827]" : ""
+                  }`}
+                  title={leftPanelCollapsed ? "展开角色档案栏" : "收起角色档案栏"}
+                >
+                  <span className="material-symbols-outlined text-[16px]">side_navigation</span>
+                </button>
+                <button
+                  onClick={() => setRightPanelCollapsed((prev) => !prev)}
+                  className={`p-1 rounded text-[#4B5563] hover:text-[#111827] transition-colors cursor-pointer flex items-center ${
+                    rightPanelCollapsed ? "bg-[#E5E7EB] text-[#111827]" : ""
+                  }`}
+                  title={rightPanelCollapsed ? "展开状态事实栏" : "收起状态事实栏"}
+                >
+                  <span className="material-symbols-outlined text-[16px]">right_panel_close</span>
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center gap-1.5 bg-[#F9FAFB] px-2.5 py-1 rounded border border-[#E5E7EB] text-[#4B5563]">
               <span className="material-symbols-outlined text-[14px]">bolt</span>
               <span>{generating ? "Streaming" : "Ready"}</span>
@@ -475,7 +539,7 @@ export const App: React.FC = () => {
           </div>
         </header>
 
-        {/* 3. 视图分发：会话视图 或 角色库视图 */}
+        {/* 3. 视图分发 */}
         {activeTab === "characters" ? (
           <div className="flex-1 p-6 overflow-y-auto bg-[#F9FAFB]">
             <div className="max-w-6xl mx-auto space-y-6">
@@ -543,92 +607,163 @@ export const App: React.FC = () => {
               </div>
             </div>
           </div>
-        ) : (
-          /* 主会话画布：三栏架构（左侧角色档案/时间线，中间叙事画布，右侧事实状态） */
-          <div className="flex-1 flex overflow-hidden">
-            {/* 栏 1：角色上下文、分支时间线与绑定的世界书 (260px) */}
-            <aside className="w-64 border-r border-[#E5E7EB] bg-[#FFFFFF] flex flex-col shrink-0 overflow-y-auto select-none">
-              {/* 角色档案卡片 */}
-              <div className="p-4 border-b border-[#E5E7EB]">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-11 h-11 rounded-lg overflow-hidden shrink-0 border border-[#E5E7EB] bg-[#F3F4F6]">
-                    <img
-                      src="/design-assets/avatar_sylvia.png"
-                      alt={session.cardName || "角色"}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = "none";
-                      }}
-                    />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="font-bold text-sm text-[#111827] truncate">
-                      {session.cardName || "未选择角色"}
-                    </div>
-                    <div className="text-[11px] text-[#4B5563] font-mono truncate">
-                      {session.cardId ? `ID: ${session.cardId.slice(0, 12)}` : "请在列表开启"}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-[#F9FAFB] p-2.5 rounded border border-[#E5E7EB] flex flex-col gap-1">
-                  <div className="flex items-center justify-between text-[#4B5563] text-[11px] font-mono">
-                    <span className="uppercase">Persona Seed</span>
-                    <span>v2 Spec</span>
-                  </div>
-                  <p className="text-xs text-[#374151] line-clamp-3 leading-relaxed">
-                    {session.cardSubtitle || "角色设定与世界观已由事件溯源框架安全持久化。"}
-                  </p>
-                </div>
+        ) : activeTab === "lorebook" ? (
+          <div className="flex-1 p-6 overflow-y-auto bg-[#F9FAFB]">
+            <div className="max-w-4xl mx-auto space-y-6">
+              <div>
+                <h1 className="text-xl font-bold text-[#111827]">世界书 / World Lorebook</h1>
+                <p className="text-xs text-[#4B5563] mt-1">
+                  当前角色卡（{session.cardName || "未选择"}）绑定的世界书条目与激活状态
+                </p>
               </div>
 
-              {/* 故事时间线分支 (Branch Timelines) */}
-              <div className="p-4 border-b border-[#E5E7EB]">
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-[11px] font-mono uppercase tracking-wider text-[#4B5563] flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">account_tree</span>
-                    分支时间线 / Branches
+              <div className="bg-[#FFFFFF] p-5 rounded-xl border border-[#E5E7EB] space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[20px] text-[#111827]">auto_stories</span>
+                    <span className="font-semibold text-sm text-[#111827]">双模检索与确定性过滤</span>
+                  </div>
+                  <span className="font-mono text-xs text-[#047857] bg-[#ECFDF5] px-2 py-0.5 rounded">
+                    Active
                   </span>
                 </div>
-                <div className="space-y-1.5">
-                  <div className="p-2 rounded bg-[#F3F4F6] border border-[#111827]/20 flex flex-col gap-0.5 cursor-pointer">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-[#111827]">#main (当前活跃)</span>
-                      <span className="text-[11px] font-mono text-[#4B5563]">{session.floors.length} 楼</span>
+                <p className="text-xs text-[#4B5563] leading-relaxed">
+                  AIRP 遵循 SillyTavern 激活语义（clean-room 实现）：
+                  常驻（constant）条目无条件激活；关键词条目按主键命中 + 副键（AND_ANY / NOT_ALL / NOT_ANY / AND_ALL）四种逻辑门过滤，支持 scan_depth 深度约束与概率门。
+                </p>
+                <div className="pt-2 text-[11px] font-mono text-[#9CA3AF]">
+                  数据来源: card_store.readWorldbook(cardId)
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : activeTab === "engine" ? (
+          <div className="flex-1 p-6 overflow-y-auto bg-[#F9FAFB]">
+            <div className="max-w-4xl mx-auto space-y-6">
+              <div>
+                <h1 className="text-xl font-bold text-[#111827]">引擎与 API 设置 / Engine & API Gateway</h1>
+                <p className="text-xs text-[#4B5563] mt-1">
+                  TavernLoom 本地记忆引擎、模型接口与持久化层运行参数
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-[#FFFFFF] p-5 rounded-xl border border-[#E5E7EB] space-y-3">
+                  <div className="font-semibold text-sm text-[#111827] flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px]">dns</span>
+                    <span>存储与数据完整性 (Storage Ground)</span>
+                  </div>
+                  <ul className="text-xs text-[#4B5563] space-y-1.5 font-mono">
+                    <li>· 存储模式: 一卡一目录物理独立</li>
+                    <li>· 事件日志: JSONL (append-only + fsync)</li>
+                    <li>· 快照机制: 每 N 事件原子落盘 checkpoint</li>
+                    <li>· 单实例互斥: .lock PID 存活检测</li>
+                  </ul>
+                </div>
+
+                <div className="bg-[#FFFFFF] p-5 rounded-xl border border-[#E5E7EB] space-y-3">
+                  <div className="font-semibold text-sm text-[#111827] flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                    <span>模型与管家 (Model & Butler)</span>
+                  </div>
+                  <ul className="text-xs text-[#4B5563] space-y-1.5 font-mono">
+                    <li>· 传输接口: ModelStreamPort / SSE</li>
+                    <li>· 管家服务: ButlerService 四级降级阶梯</li>
+                    <li>· 一致性协议: 楼层落地后推进状态提取</li>
+                    <li>· 正则渲染: 双侧分离 (Display vs Prompt)</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* 主会话画布：三栏架构（支持左右栏自由折叠） */
+          <div className="flex-1 flex overflow-hidden">
+            {/* 栏 1：角色上下文与时间线（支持折叠） */}
+            {!leftPanelCollapsed && (
+              <aside className="w-64 border-r border-[#E5E7EB] bg-[#FFFFFF] flex flex-col shrink-0 overflow-y-auto select-none transition-all duration-200">
+                {/* 角色档案卡片 */}
+                <div className="p-4 border-b border-[#E5E7EB]">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-11 h-11 rounded-lg overflow-hidden shrink-0 border border-[#E5E7EB] bg-[#F3F4F6]">
+                      <img
+                        src="/design-assets/avatar_sylvia.png"
+                        alt={session.cardName || "角色"}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = "none";
+                        }}
+                      />
                     </div>
-                    <span className="text-xs text-[#4B5563] truncate">事件潮汐已物理落盘</span>
+                    <div className="min-w-0">
+                      <div className="font-bold text-sm text-[#111827] truncate">
+                        {session.cardName || "未选择角色"}
+                      </div>
+                      <div className="text-[11px] text-[#4B5563] font-mono truncate">
+                        {session.cardId ? `ID: ${session.cardId.slice(0, 12)}` : "请在列表开启"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#F9FAFB] p-2.5 rounded border border-[#E5E7EB] flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-[#4B5563] text-[11px] font-mono">
+                      <span className="uppercase">Persona Seed</span>
+                      <span>v2 Spec</span>
+                    </div>
+                    <p className="text-xs text-[#374151] line-clamp-3 leading-relaxed">
+                      {session.cardSubtitle || "角色设定与世界观已由事件溯源框架安全持久化。"}
+                    </p>
                   </div>
                 </div>
-              </div>
 
-              {/* 挂载的世界书条目 */}
-              <div className="p-4 flex-1 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
+                {/* 故事时间线分支 (Branch Timelines) */}
+                <div className="p-4 border-b border-[#E5E7EB]">
+                  <div className="flex items-center justify-between mb-2.5">
                     <span className="text-[11px] font-mono uppercase tracking-wider text-[#4B5563] flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[14px]">auto_stories</span>
-                      世界书投影
+                      <span className="material-symbols-outlined text-[14px]">account_tree</span>
+                      分支时间线 / Branches
                     </span>
-                    <span className="text-[11px] font-mono text-[#4B5563]">双模激活</span>
                   </div>
-                  <div className="p-2.5 rounded border border-[#E5E7EB] bg-[#F9FAFB] text-xs text-[#4B5563]">
-                    世界书条目在会话中按关键词与常驻规则实时投影，保障上下文极简无泄漏。
+                  <div className="space-y-1.5">
+                    <div className="p-2 rounded bg-[#F3F4F6] border border-[#111827]/20 flex flex-col gap-0.5 cursor-pointer">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-[#111827]">#main (当前活跃)</span>
+                        <span className="text-[11px] font-mono text-[#4B5563]">{session.floors.length} 楼</span>
+                      </div>
+                      <span className="text-xs text-[#4B5563] truncate">事件潮汐已物理落盘</span>
+                    </div>
                   </div>
                 </div>
 
-                {session.undoCheckpointAvailable && (
-                  <div className="pt-3 border-t border-[#E5E7EB]">
-                    <button
-                      onClick={() => void handleUndoRollback()}
-                      className="w-full py-1.5 rounded bg-[#FEF3C7] border border-amber-300 hover:bg-amber-100 text-[#B45309] font-medium text-xs flex items-center justify-center gap-1 cursor-pointer transition"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">undo</span>
-                      <span>撤销回退 (自包含恢复)</span>
-                    </button>
+                {/* 挂载的世界书条目 */}
+                <div className="p-4 flex-1 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-mono uppercase tracking-wider text-[#4B5563] flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[14px]">auto_stories</span>
+                        世界书投影
+                      </span>
+                      <span className="text-[11px] font-mono text-[#4B5563]">双模激活</span>
+                    </div>
+                    <div className="p-2.5 rounded border border-[#E5E7EB] bg-[#F9FAFB] text-xs text-[#4B5563]">
+                      世界书条目在会话中按关键词与常驻规则实时投影，保障上下文极简无泄漏。
+                    </div>
                   </div>
-                )}
-              </div>
-            </aside>
+
+                  {session.undoCheckpointAvailable && (
+                    <div className="pt-3 border-t border-[#E5E7EB]">
+                      <button
+                        onClick={() => void handleUndoRollback()}
+                        className="w-full py-1.5 rounded bg-[#FEF3C7] border border-amber-300 hover:bg-amber-100 text-[#B45309] font-medium text-xs flex items-center justify-center gap-1 cursor-pointer transition"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">undo</span>
+                        <span>撤销回退 (自包含恢复)</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            )}
 
             {/* 栏 2：中央沉浸对话流视口 */}
             <main className="flex-1 flex flex-col bg-[#FFFFFF] min-w-0 overflow-hidden relative">
@@ -761,45 +896,47 @@ export const App: React.FC = () => {
               </div>
             </main>
 
-            {/* 栏 3：右侧状态事实与管家监控面板 (260px) */}
-            <aside className="w-64 border-l border-[#E5E7EB] bg-[#FFFFFF] p-4 flex flex-col gap-6 overflow-y-auto shrink-0 select-none">
-              <div>
-                <div className="text-[11px] font-mono font-semibold uppercase tracking-wider text-[#4B5563] mb-2 flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[14px]">dataset</span>
-                  结构化状态 (StateSnapshot)
-                </div>
-                {Object.keys(session.currentState).length === 0 ? (
-                  <div className="text-xs text-[#9CA3AF] bg-[#F9FAFB] p-3 rounded border border-[#E5E7EB]">
-                    尚无状态——由后台管家在每轮生成后按四级降级提取。
+            {/* 栏 3：右侧状态事实与管家监控面板（支持折叠） */}
+            {!rightPanelCollapsed && (
+              <aside className="w-64 border-l border-[#E5E7EB] bg-[#FFFFFF] p-4 flex flex-col gap-6 overflow-y-auto shrink-0 select-none transition-all duration-200">
+                <div>
+                  <div className="text-[11px] font-mono font-semibold uppercase tracking-wider text-[#4B5563] mb-2 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">dataset</span>
+                    结构化状态 (StateSnapshot)
                   </div>
-                ) : (
-                  <pre className="text-xs bg-[#F9FAFB] p-2.5 rounded border border-[#E5E7EB] text-[#111827] font-mono overflow-x-auto">
-                    {JSON.stringify(session.currentState, null, 2)}
-                  </pre>
-                )}
-              </div>
+                  {Object.keys(session.currentState).length === 0 ? (
+                    <div className="text-xs text-[#9CA3AF] bg-[#F9FAFB] p-3 rounded border border-[#E5E7EB]">
+                      尚无状态——由后台管家在每轮生成后按四级降级提取。
+                    </div>
+                  ) : (
+                    <pre className="text-xs bg-[#F9FAFB] p-2.5 rounded border border-[#E5E7EB] text-[#111827] font-mono overflow-x-auto">
+                      {JSON.stringify(session.currentState, null, 2)}
+                    </pre>
+                  )}
+                </div>
 
-              <div>
-                <div className="text-[11px] font-mono font-semibold uppercase tracking-wider text-[#4B5563] mb-2 flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[14px]">smart_toy</span>
-                  后台管家 (ButlerService)
+                <div>
+                  <div className="text-[11px] font-mono font-semibold uppercase tracking-wider text-[#4B5563] mb-2 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">smart_toy</span>
+                    后台管家 (ButlerService)
+                  </div>
+                  <div className="text-xs text-[#4B5563] bg-[#F9FAFB] p-3 rounded border border-[#E5E7EB] space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span>运行状态:</span>
+                      <span className="font-mono text-[#047857] font-semibold">空闲 (idle)</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span>一致性协议:</span>
+                      <span className="font-mono text-[#111827]">楼层已同步</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span>失败处理:</span>
+                      <span className="font-mono text-[#9CA3AF]">显式降级</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-xs text-[#4B5563] bg-[#F9FAFB] p-3 rounded border border-[#E5E7EB] space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span>运行状态:</span>
-                    <span className="font-mono text-[#047857] font-semibold">空闲 (idle)</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>一致性协议:</span>
-                    <span className="font-mono text-[#111827]">楼层已同步</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>失败处理:</span>
-                    <span className="font-mono text-[#9CA3AF]">显式降级</span>
-                  </div>
-                </div>
-              </div>
-            </aside>
+              </aside>
+            )}
           </div>
         )}
       </div>
