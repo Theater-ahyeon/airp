@@ -51,9 +51,62 @@ describe("Stage 5 Core: SillyTavern V2 Spec Card Importer", () => {
     expect(imported.worldbookEntries).toHaveLength(2);
     expect(imported.worldbookEntries[0].keys).toContain("潮汐罗盘");
   });
-
   it("异常容错：根对象非法或缺少 name 时显式报错拒绝", () => {
     expect(() => importSillyTavernV2Card(null)).toThrowError();
     expect(() => importSillyTavernV2Card({})).toThrowError("missing required 'name'");
+  });
+
+  it("P1 导入保全：生成兼容报告且覆盖全部字段状态", () => {
+    const stCardWithExt = {
+      spec: "chara_card_v2",
+      spec_version: "2.0",
+      data: {
+        name: "测试角色",
+        description: "测试描述",
+        personality: "测试性格",
+        first_mes: "测试开场白",
+        creator: "测试作者",
+        character_version: "1.0.0",
+        extensions: {
+          regex_scripts: [
+            { id: "s1", scriptName: "StatusBlock", findRegex: "<status>", replaceString: "<div>" }
+          ],
+          tavern_helper: { version: "1.0" }
+        },
+        character_book: {
+          name: "测试书",
+          entries: [
+            {
+              keys: ["测试主键"],
+              secondary_keys: ["测试副键"],
+              content: "测试条目内容",
+              enabled: true,
+              selective: true,
+              selectiveLogic: 0,
+              extensions: {
+                scan_depth: 4,
+                probability: 100
+              }
+            }
+          ]
+        }
+      }
+    };
+
+    const imported = importSillyTavernV2Card(stCardWithExt);
+    expect(imported.compatReport).toBeDefined();
+    expect(imported.compatReport.spec).toBe("chara_card_v2");
+    expect(imported.compatReport.stats.supported).toBeGreaterThan(0);
+    expect(imported.compatReport.stats.preserved).toBeGreaterThan(0);
+
+    // 检查是否有 extensions 的 preserved 标注
+    const extStatus = imported.compatReport.fields.find((f) => f.path === "data.extensions");
+    expect(extStatus).toBeDefined();
+    expect(extStatus?.status).toBe("preserved");
+
+    // 检查世界书条目 extensions 属性的正确解析
+    expect(imported.worldbookEntries[0].secondaryKeys).toEqual(["测试副键"]);
+    expect(imported.worldbookEntries[0].secondaryLogic).toBe("AND_ANY");
+    expect(imported.worldbookEntries[0].scanDepth).toBe(4);
   });
 });

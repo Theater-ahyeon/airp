@@ -14,6 +14,7 @@ import {
   type StartRunInput,
 } from "../contracts.js";
 import type { CharacterAttributes } from "../../core/types/character.js";
+import { extractCharacterCardFromPng } from "../../core/importers/png-card-extractor.js";
 import { createSecurityMiddleware } from "./security.js";
 import { handleRunEventsSSE } from "./sse.js";
 
@@ -242,6 +243,95 @@ export function createApp(config: ServerConfig, deps: ServerDeps): Hono {
       return c.json({ cardId: result.cardId }, 201);
     } catch (err) {
       console.error("Failed to import card:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // POST /api/cards/import-st —— SillyTavern 卡导入（P1 导入保全）
+  // 两种载荷：JSON 卡 body 直接传；PNG 卡 multipart/form-data 的 file 字段（内嵌 chara/ccv3）。
+  app.post("/api/cards/import-st", async (c) => {
+    try {
+      let jsonRaw: unknown;
+      const contentType = c.req.header("content-type") ?? "";
+      if (contentType.includes("multipart/form-data")) {
+        const form = await c.req.parseBody();
+        const file = form["file"];
+        if (!(file instanceof File)) {
+          return c.json({ error: "multipart body must contain a 'file' field" }, 400);
+        }
+        const pngBuffer = Buffer.from(await file.arrayBuffer());
+        jsonRaw = extractCharacterCardFromPng(pngBuffer);
+      } else {
+        jsonRaw = await c.req.json();
+      }
+
+      const result = await deps.cardStore.importStCard(jsonRaw);
+      return c.json(
+        {
+          cardId: result.cardId,
+          worldbookEntries: result.worldbookEntries,
+          compat: {
+            spec: result.compatReport.spec,
+            specVersion: result.compatReport.specVersion,
+            stats: result.compatReport.stats
+          }
+        },
+        201
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("PNG") || message.includes("chara")) {
+        return c.json({ error: `Not a SillyTavern card: ${message}` }, 400);
+      }
+      if (message.includes("missing required 'name'")) {
+        return c.json({ error: message }, 400);
+      }
+      console.error("Failed to import ST card:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // GET /api/cards/:cardId/st/original —— 不可变原版 JSON
+  app.get("/api/cards/:cardId/st/original", async (c) => {
+    const cardId = c.req.param("cardId");
+    try {
+      const original = await deps.cardStore.readStOriginal(cardId);
+      if (original === null) {
+        return c.json({ error: `Card has no ST original: ${cardId}` }, 404);
+      }
+      return c.json(original, 200);
+    } catch (err) {
+      console.error("Failed to read ST original:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // GET /api/cards/:cardId/st/compat —— 字段级兼容报告
+  app.get("/api/cards/:cardId/st/compat", async (c) => {
+    const cardId = c.req.param("cardId");
+    try {
+      const report = await deps.cardStore.readStCompatReport(cardId);
+      if (report === null) {
+        return c.json({ error: `Card has no compat report: ${cardId}` }, 404);
+      }
+      return c.json(report, 200);
+    } catch (err) {
+      console.error("Failed to read compat report:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // GET /api/cards/:cardId/worldbook —— 世界书投影
+  app.get("/api/cards/:cardId/worldbook", async (c) => {
+    const cardId = c.req.param("cardId");
+    try {
+      const worldbook = await deps.cardStore.readWorldbook(cardId);
+      if (worldbook === null) {
+        return c.json({ entries: [] }, 200);
+      }
+      return c.json(worldbook, 200);
+    } catch (err) {
+      console.error("Failed to read worldbook:", err);
       return c.json({ error: "Internal Server Error" }, 500);
     }
   });

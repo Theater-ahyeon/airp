@@ -9,6 +9,8 @@
 import type { FloorMessage, Role } from "../core/types/floor-tree.js";
 import type { StateOp, StateSnapshot } from "../core/types/state.js";
 import type { CharacterAttributes } from "../core/types/character.js";
+import type { Worldbook } from "../core/types/worldbook.js";
+import type { StCompatReport } from "../core/importers/compat-report.js";
 
 /** 事件日志 schema 版本。破坏性变更必须递增，并在 migrations.ts 中提供迁移。 */
 export const RUNTIME_SCHEMA_VERSION = 1;
@@ -18,7 +20,13 @@ export const CARD_LAYOUT = {
   card: "card.json",
   meta: "meta.json",
   sessions: "sessions",
-  backups: "backups"
+  backups: "backups",
+  /** ST 导入不可变原版 JSON（verbatim，含 extensions/根级镜像字段）。 */
+  original: "original.json",
+  /** ST 兼容报告（导入时生成）。 */
+  compat: "compat.json",
+  /** 世界书存储（ST character_book 投影，参与组装）。 */
+  worldbook: "worldbook.json"
 } as const;
 
 /** 会话目录布局（相对 <AIRP_HOME>/cards/<cardId>/sessions/<sessionId>/）。 */
@@ -288,8 +296,8 @@ export interface CardSummary {
   name: string;
   createdAt: number;
   updatedAt: number;
-  sessionCount: number;
-  schemaVersion: number;
+  sessionCount?: number;
+  schemaVersion?: number;
 }
 
 export interface ExportBundle {
@@ -305,6 +313,19 @@ export interface ExportBundle {
     sessionId: string;
     events: RuntimeEvent[];
   }>;
+  /** ST 导入资产（P1 导入保全）：不可变原版 / 兼容报告 / 世界书。 */
+  st?: {
+    original?: unknown;
+    compatReport?: unknown;
+    worldbook?: unknown;
+  };
+}
+
+/** importStCard 结果：兼容报告摘要随返回，完整报告持久化在 compat.json。 */
+export interface StImportResult {
+  cardId: string;
+  compatReport: StCompatReport;
+  worldbookEntries: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +379,15 @@ export interface CardStoreFacade {
 
   exportCard(cardId: string): Promise<ExportBundle>;
   importCard(bundle: ExportBundle, opts?: { newCardId?: string }): Promise<{ cardId: string }>;
+
+  /** ST 卡导入：原版 verbatim + 世界书 + 兼容报告 + 工作副本一次落盘。 */
+  importStCard(jsonRaw: unknown, opts?: { cardId?: string }): Promise<StImportResult>;
+  /** ST 不可变原版 JSON；非 ST 导入卡返回 null。 */
+  readStOriginal(cardId: string): Promise<unknown | null>;
+  /** ST 字段级兼容报告；非 ST 导入卡返回 null。 */
+  readStCompatReport(cardId: string): Promise<StCompatReport | null>;
+  /** 世界书投影；无世界书卡返回 null。 */
+  readWorldbook(cardId: string): Promise<Worldbook | null>;
 
   /** 版本化迁移，迁移前自动备份；无需迁移时 backupPath 为 null。 */
   migrate(cardId: string): Promise<{ from: number; to: number; backupPath: string | null }>;

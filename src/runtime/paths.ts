@@ -61,6 +61,21 @@ export function backupsDir(home: string, cardId: string): string {
   return path.join(cardDir(home, cardId), CARD_LAYOUT.backups);
 }
 
+/** <AIRP_HOME>/cards/<cardId>/original.json（ST 不可变原版） */
+export function cardOriginalPath(home: string, cardId: string): string {
+  return path.join(cardDir(home, cardId), CARD_LAYOUT.original);
+}
+
+/** <AIRP_HOME>/cards/<cardId>/compat.json（ST 兼容报告） */
+export function cardCompatPath(home: string, cardId: string): string {
+  return path.join(cardDir(home, cardId), CARD_LAYOUT.compat);
+}
+
+/** <AIRP_HOME>/cards/<cardId>/worldbook.json（世界书存储） */
+export function cardWorldbookPath(home: string, cardId: string): string {
+  return path.join(cardDir(home, cardId), CARD_LAYOUT.worldbook);
+}
+
 /** <AIRP_HOME>/cards/<cardId>/sessions */
 export function sessionsBaseDir(home: string, cardId: string): string {
   return path.join(cardDir(home, cardId), CARD_LAYOUT.sessions);

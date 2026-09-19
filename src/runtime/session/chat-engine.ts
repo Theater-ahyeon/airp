@@ -140,10 +140,11 @@ export class ChatEngine implements ChatEngineFacade {
     });
     const userFloorId = userFloor.payload.floorId;
 
-    // 2. 组装上下文：卡片 + 楼层历史 + 状态 + 摘要
-    const [card, replayRes] = await Promise.all([
+    // 2. 组装上下文：卡片 + 世界书 + 楼层历史 + 状态 + 摘要
+    const [card, replayRes, worldbook] = await Promise.all([
       this.cardStore.readCard(input.cardId),
-      this.cardStore.replay(input.cardId, input.sessionId)
+      this.cardStore.replay(input.cardId, input.sessionId),
+      this.cardStore.readWorldbook(input.cardId)
     ]);
     const characterCard = createCharacterCard(input.cardId, card.workingCopy);
     const floors = Object.values(replayRes.tree.floors)
@@ -154,6 +155,7 @@ export class ChatEngine implements ChatEngineFacade {
       character: characterCard,
       floorHistory: floors,
       latestUserInput: input.prompt,
+      worldbook: worldbook ?? undefined,
       state: replayRes.state,
       rollingSummary: replayRes.summary ?? undefined,
       maxContextTokens: input.maxContextTokens ?? this.opts.maxContextTokens,

@@ -211,6 +211,70 @@ describe("CardStore Facade (验收点 1, 2, 5, 6, 8, 9)", () => {
     await expect(store.importCard(bundle)).rejects.toThrow(/already exists/);
   });
 
+  it("P1 导入保全：importStCard 与 exportCard 无损保留原版、兼容报告与世界书（验收点 10）", async () => {
+    const rawStJson = {
+      spec: "chara_card_v2",
+      spec_version: "2.0",
+      data: {
+        name: "保全测试卡",
+        description: "人设描述",
+        personality: "测试性格",
+        first_mes: "测试开场白",
+        extensions: {
+          regex_scripts: [{ id: "r1", findRegex: "a", replaceString: "b" }],
+          custom_field: "any_val"
+        },
+        character_book: {
+          name: "测试世界书",
+          entries: [
+            {
+              keys: ["主键1"],
+              content: "内容1",
+              enabled: true,
+              extensions: { scan_depth: 3 }
+            }
+          ]
+        }
+      }
+    };
+
+    // 1. importStCard 导入
+    const importRes = await store.importStCard(rawStJson);
+    expect(importRes.cardId).toBeDefined();
+    expect(importRes.worldbookEntries).toBe(1);
+    expect(importRes.compatReport.spec).toBe("chara_card_v2");
+
+    // 2. 读取原版、兼容报告与世界书
+    const orig = await store.readStOriginal(importRes.cardId);
+    expect(orig).toEqual(rawStJson);
+
+    const compat = await store.readStCompatReport(importRes.cardId);
+    expect(compat).toBeDefined();
+    expect(compat?.stats.preserved).toBeGreaterThan(0);
+
+    const wb = await store.readWorldbook(importRes.cardId);
+    expect(wb).toBeDefined();
+    expect(wb?.entries).toHaveLength(1);
+    expect(wb?.entries[0].keys).toContain("主键1");
+
+    // 3. exportCard 打包并验证 st 段
+    const bundle = await store.exportCard(importRes.cardId);
+    expect(bundle.st).toBeDefined();
+    expect(bundle.st?.original).toEqual(rawStJson);
+    expect(bundle.st?.compatReport).toBeDefined();
+    expect(bundle.st?.worldbook).toBeDefined();
+
+    // 4. importCard 恢复到新卡并验证完整性
+    const { cardId: restoredId } = await store.importCard(bundle, { newCardId: "restored_st_card" });
+    const restoredOrig = await store.readStOriginal(restoredId);
+    expect(restoredOrig).toEqual(rawStJson);
+
+    const restoredCompat = await store.readStCompatReport(restoredId);
+    expect(restoredCompat).toEqual(compat);
+
+    const restoredWb = await store.readWorldbook(restoredId);
+    expect(restoredWb).toEqual(wb);
+  });
   it("随机生成 ≥200 条混合事件重放一致性（验收点 1）", async () => {
     // 设置 snapshotInterval 较大以验证完整重放算法与 reference runner
     const referenceStore = new CardStore(tmpHome, 500);

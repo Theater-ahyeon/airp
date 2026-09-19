@@ -50,7 +50,17 @@ describe("端到端集成测试（真实装配）", () => {
       await server.close();
     }
     if (tmpHome) {
-      await fs.rm(tmpHome, { recursive: true, force: true });
+      // Windows 上后台回合收尾（butler 事件写入）与 rm 存在竞态，重试以消除 flake
+      for (let i = 0; i < 5; i++) {
+        try {
+          await fs.rm(tmpHome, { recursive: true, force: true });
+          break;
+        } catch {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          setTimeout(resolve, 80);
+          await promise;
+        }
+      }
     }
   });
 

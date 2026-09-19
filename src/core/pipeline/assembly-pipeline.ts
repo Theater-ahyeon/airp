@@ -91,19 +91,33 @@ export class AssemblyPipeline {
     };
 
     // --- Block 3: Static Worldbook Anchors (P1, Stable Prefix) ---
+    // ST 扫描语义：当前输入 + 最近楼层文本（recent-first），条目 scanDepth 截取；
+    // scenario 不参与扫描（ST 只扫消息），常驻条目不依赖扫描。
     let staticWorldText = "";
     let dynamicWorldText = "";
     if (ctx.worldbook) {
-      const fullContextText = `${ctx.latestUserInput} ${ctx.character.workingCopy.scenario}`;
-      const { activeEntries } = filterWorldbookEntries(ctx.worldbook, fullContextText, ctx.allowToolSearch ?? false);
+      const recentTexts = [ctx.latestUserInput];
+      for (let i = ctx.floorHistory.length - 1; i >= 0 && recentTexts.length < 32; i--) {
+        recentTexts.push(ctx.floorHistory[i].content);
+      }
+      const { activeEntries } = filterWorldbookEntries(
+        ctx.worldbook,
+        recentTexts,
+        ctx.allowToolSearch ?? false,
+        2
+      );
       const staticParts: string[] = [];
       const dynamicParts: string[] = [];
 
       for (const e of activeEntries) {
         if (e.mode === "always") {
-          staticParts.push(`[World Lore: ${e.keys.join("/")}]\n${e.content}`);
+          staticParts.push(e.comment ? `[${e.comment}]\n${e.content}` : `[World Lore]\n${e.content}`);
         } else {
-          dynamicParts.push(`[World Lore (Triggered): ${e.keys.join("/")}]\n${e.content}`);
+          dynamicParts.push(
+            e.comment
+              ? `[${e.comment}]\n${e.content}`
+              : `[World Lore (Triggered): ${e.keys.join("/")}]\n${e.content}`
+          );
         }
       }
       staticWorldText = staticParts.join("\n\n");

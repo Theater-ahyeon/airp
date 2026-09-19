@@ -26,6 +26,7 @@ pdf_page_*.png
 pdf_page_*.jpg
 
 cards/
+data/
 .workbuddy/
 demos/
 preview.html

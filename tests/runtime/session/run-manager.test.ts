@@ -354,7 +354,7 @@ describe("RunManager 生命周期与 9 项验收标准", () => {
     // 稍微延时确保最后的 onEnd 到达
     {
       const { promise, resolve } = Promise.withResolvers<void>();
-      setTimeout(resolve, 50);
+      setTimeout(resolve, 150);
       await promise;
     }
 

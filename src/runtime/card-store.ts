@@ -31,6 +31,9 @@ import type { CharacterAttributes } from "../core/types/character.js";
 import type { Role, FloorMessage } from "../core/types/floor-tree.js";
 import type { StateOp, StateSnapshot } from "../core/types/state.js";
 import { applyStateOp } from "../core/types/state.js";
+import type { Worldbook, WorldbookEntry } from "../core/types/worldbook.js";
+import { importSillyTavernV2Card } from "../core/importers/st-card-importer.js";
+import type { StCompatReport } from "../core/importers/compat-report.js";
 import {
   resolveAirpHome,
   cardDir,
@@ -41,7 +44,10 @@ import {
   sessionDir,
   eventsPath,
   snapshotsDir,
-  assertSafeId
+  assertSafeId,
+  cardOriginalPath,
+  cardCompatPath,
+  cardWorldbookPath
 } from "./paths.js";
 import { ensureDir, writeJsonAtomic, writeAtomic, readJson } from "./fs-atomic.js";
 import { EventLog } from "./event-log.js";
@@ -778,6 +784,21 @@ export class CardStore implements CardStoreFacade {
       });
     }
 
+    // P1 导入保全：ST 资产随包往返（original/compat/worldbook 任一存在即携带 st 段）
+    const [stOriginal, stCompat, stWorldbook] = await Promise.all([
+      this.readStOriginal(cardId),
+      this.readStCompatReport(cardId),
+      this.readWorldbook(cardId)
+    ]);
+    const st =
+      stOriginal !== null || stCompat !== null || stWorldbook !== null
+        ? {
+            original: stOriginal ?? undefined,
+            compatReport: stCompat ?? undefined,
+            worldbook: stWorldbook ?? undefined
+          }
+        : undefined;
+
     return {
       bundleVersion: EXPORT_BUNDLE_VERSION,
       exportedAt: Date.now(),
@@ -787,7 +808,8 @@ export class CardStore implements CardStoreFacade {
         original,
         workingCopy
       },
-      sessions
+      sessions,
+      st
     };
   }
 
@@ -823,6 +845,19 @@ export class CardStore implements CardStoreFacade {
     await writeJsonAtomic(cardPayloadPath(this.home, targetCardId), cardPayload);
     await ensureDir(sessionsBaseDir(this.home, targetCardId));
 
+    // P1 导入保全：ST 资产恢复（原版/兼容报告/世界书 verbatim 往返）
+    if (bundle.st) {
+      if (bundle.st.original !== undefined) {
+        await writeJsonAtomic(cardOriginalPath(this.home, targetCardId), bundle.st.original);
+      }
+      if (bundle.st.compatReport !== undefined) {
+        await writeJsonAtomic(cardCompatPath(this.home, targetCardId), bundle.st.compatReport);
+      }
+      if (bundle.st.worldbook !== undefined) {
+        await writeJsonAtomic(cardWorldbookPath(this.home, targetCardId), bundle.st.worldbook);
+      }
+    }
+
     // 导入会话与事件
     for (const sess of bundle.sessions) {
       const sId = sess.sessionId;
@@ -850,6 +885,101 @@ export class CardStore implements CardStoreFacade {
     }
 
     return { cardId: targetCardId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // ST 卡导入（P1 导入保全：原版 verbatim + 世界书 + 兼容报告 + 工作副本）
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 导入 SillyTavern v1/v2/v3 卡。
+   * 落盘五件套：card.json（工作副本）/ original.json（不可变原版 verbatim）/
+   * worldbook.json（character_book 投影）/ compat.json（字段级兼容报告）/ meta.json。
+   * 原版 JSON 原样字节保全（JSON.stringify 宽松往返：对象键序保留，仅空白差异），
+   * 重导出时对 original.json 与导入源做结构恒等（deep-equal）验证——零字段丢失红线的实现。
+   */
+  async importStCard(
+    jsonRaw: unknown,
+    opts?: { cardId?: string }
+  ): Promise<{ cardId: string; compatReport: StCompatReport; worldbookEntries: number }> {
+    const imported = importSillyTavernV2Card(jsonRaw);
+
+    const cId = opts?.cardId ?? `card_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+    assertSafeId(cId, "cardId");
+    const targetDir = cardDir(this.home, cId);
+    try {
+      await fs.access(targetDir);
+      throw new Error(`Target card directory already exists: ${cId}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    const now = Date.now();
+    const meta: CardMeta = {
+      schemaVersion: RUNTIME_SCHEMA_VERSION,
+      cardId: cId,
+      name: imported.attributes.name || cId,
+      createdAt: now,
+      updatedAt: now
+    };
+    const cardData: CardJsonData = {
+      original: imported.attributes,
+      workingCopy: imported.attributes
+    };
+    const worldbook: Worldbook | null = imported.worldbookEntries.length > 0
+      ? {
+          id: cId,
+          name: imported.worldbookName ?? imported.attributes.name,
+          entries: imported.worldbookEntries
+        }
+      : null;
+
+    await ensureDir(targetDir);
+    await ensureDir(sessionsBaseDir(this.home, cId));
+    await writeJsonAtomic(cardMetaPath(this.home, cId), meta);
+    await writeJsonAtomic(cardPayloadPath(this.home, cId), cardData);
+    await writeJsonAtomic(cardOriginalPath(this.home, cId), jsonRaw);
+    await writeJsonAtomic(cardCompatPath(this.home, cId), imported.compatReport);
+    if (worldbook) {
+      await writeJsonAtomic(cardWorldbookPath(this.home, cId), worldbook);
+    }
+
+    return { cardId: cId, compatReport: imported.compatReport, worldbookEntries: imported.worldbookEntries.length };
+  }
+
+  /** 读取不可变原版 JSON（无原版的 AIRP 原生卡返回 null）。 */
+  async readStOriginal(cardId: string): Promise<unknown | null> {
+    assertSafeId(cardId, "cardId");
+    try {
+      return await readJson<unknown>(cardOriginalPath(this.home, cardId));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  /** 读取兼容报告（非 ST 导入卡返回 null）。 */
+  async readStCompatReport(cardId: string): Promise<StCompatReport | null> {
+    assertSafeId(cardId, "cardId");
+    try {
+      return await readJson<StCompatReport>(cardCompatPath(this.home, cardId));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  /** 读取世界书（无世界书卡返回 null）。 */
+  async readWorldbook(cardId: string): Promise<Worldbook | null> {
+    assertSafeId(cardId, "cardId");
+    try {
+      return await readJson<Worldbook>(cardWorldbookPath(this.home, cardId));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------------------
