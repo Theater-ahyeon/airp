@@ -10,7 +10,7 @@
 2. **事件溯源与物理遗忘**：采用一卡一目录 + JSONL append-only 事件日志（patch-first）+ 快照 checkpoint。回退分支即执行状态物理遗忘，支持撤销回退防呆保护。
 3. **后台管家与四级降级阶梯**：楼间异步自动提取结构化事实与生成滚动摘要，支持 `tool calling` $\rightarrow$ `JSON mode` $\rightarrow$ `prompt+parse` $\rightarrow$ `禁用` 四级自动探测与降级。
 4. **管家一致性协议**：组装管线严格等待前一楼状态提取结算，杜绝脏状态产生。
-5. **缓存感知组装（Cache-Aware Assembly）**：静态系统设定前置、缓变长程摘要居中、动态历史尾部追加，跨轮次前缀哈希一致，达成 **≥90% 前缀缓存命中率**。
+5. **缓存感知组装（Cache-Aware Assembly）**：静态系统设定前置、缓变长程摘要居中、动态历史尾部追加，跨轮次前缀哈希一致，稳定前缀 token 占比 ≥90%（缓存命中的必要条件；真实命中率以接入 provider 的 usage.cacheRead 为准，当前为合成基准）。
 6. **无缝兼容 SillyTavern 社区资产**：内置纯洁室实现的 ST v2 Spec 角色卡解析器，支持从 PNG（`chara`/`ccv3`）无损提取角色人设、备用开场白及数百条内嵌世界书。
 7. **后端拥有生成生命周期**：Run 状态持久化于磁盘，SSE 仅作为视图；刷新页面或断线自动通过 `?from=<seq>` 执行 Reattach 实时恢复进行中的输出。
 

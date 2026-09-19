@@ -141,7 +141,9 @@ export class RunManager implements RunManagerFacade {
     try {
       const stream = this.modelPort.stream({
         model: record.model,
-        messages: [{ role: "user", content: input.prompt }],
+        // ChatEngine 已完成组装：messages 是完整消息序列（system 前缀+历史+最新输入）。
+        // 未提供时退回裸 prompt（仅底层测试/探针直连场景）。
+        messages: input.messages ?? [{ role: "user", content: input.prompt }],
         abortSignal: abortController.signal
       });
 

@@ -8,7 +8,7 @@ import type {
   ExportBundle,
   ReplayResult,
   StartRunInput,
-  RunRecord,
+  ChatEngineFacade,
   RunEventSink,
   RuntimeEvent,
   RuntimeEventDraft,
@@ -350,5 +350,20 @@ export class FakeRunManager implements RunManagerFacade {
 
   async recoverOnBoot(): Promise<RunRecord[]> {
     return [];
+  }
+}
+
+/**
+ * ChatEngine 门面的内存 Fake：直接转发到注入的 startRun 实现（默认 FakeRunManager.startRun）。
+ * 供 app/launch/e2e 测试构造 ServerDeps 使用。
+ */
+export class FakeChatEngine implements ChatEngineFacade {
+  public startTurnCalls: StartRunInput[] = [];
+
+  constructor(private readonly fallback: RunManagerFacade) {}
+
+  async startTurn(input: StartRunInput): Promise<RunRecord> {
+    this.startTurnCalls.push(input);
+    return this.fallback.startRun(input);
   }
 }

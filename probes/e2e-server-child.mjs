@@ -4,10 +4,10 @@
 
 import { CardStore } from "../dist/runtime/card-store.js";
 import { RunManager, MockModelPort } from "../dist/runtime/session/index.js";
+import { ChatEngine } from "../dist/runtime/session/chat-engine.js";
 import { MockModelAdapter } from "../dist/core/adapters/mock-model.js";
 import { createApp } from "../dist/runtime/server/app.js";
 import { startServer } from "../dist/runtime/server/launch.js";
-
 const port = Number(process.argv[2]);
 const home = process.argv[3];
 const token = process.argv[4];
@@ -27,6 +27,7 @@ adapter.enqueueResponse(LONG_REPLY);
 
 const modelPort = new MockModelPort({ adapter, deltaDelayMs: 40 });
 const runManager = new RunManager(store, modelPort, { intervalMs: 80 });
+const chatEngine = new ChatEngine(store, runManager, modelPort, adapter);
 
 // 启动恢复：把上次进程崩溃时遗留的 queued/running Run 标记为 interrupted
 const recovered = await runManager.recoverOnBoot();
@@ -38,7 +39,7 @@ const config = {
   allowedOrigins: [`http://127.0.0.1:${port}`, `http://localhost:${port}`],
   airpHome: home
 };
-const deps = { cardStore: store, runManager };
+const deps = { cardStore: store, runManager, chatEngine };
 
 const app = createApp(config, deps);
 void app;

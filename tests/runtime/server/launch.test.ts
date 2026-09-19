@@ -3,7 +3,7 @@
 import net from "node:net";
 import { describe, it, expect } from "vitest";
 import { startServer } from "../../../src/runtime/server/launch.js";
-import { FakeCardStore, FakeRunManager } from "./fakes.js";
+import { FakeCardStore, FakeRunManager, FakeChatEngine } from "./fakes.js";
 import type { ServerConfig } from "../../../src/runtime/contracts.js";
 
 describe("launch.ts 服务启动与端口回退", () => {
@@ -37,6 +37,7 @@ describe("launch.ts 服务启动与端口回退", () => {
     const started = await startServer(config, {
       cardStore: fakeCardStore,
       runManager: fakeRunManager,
+      chatEngine: new FakeChatEngine(fakeRunManager),
     });
 
     try {

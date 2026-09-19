@@ -1,7 +1,7 @@
 // tests/runtime/server/app.test.ts
 import { describe, it, expect, beforeEach } from "vitest";
 import { createApp } from "../../../src/runtime/server/app.js";
-import { FakeCardStore, FakeRunManager } from "./fakes.js";
+import { FakeCardStore, FakeRunManager, FakeChatEngine } from "./fakes.js";
 import type { ServerConfig } from "../../../src/runtime/contracts.js";
 import type { Hono } from "hono";
 describe("app.ts 路由契约与端点测试", () => {
@@ -25,6 +25,7 @@ describe("app.ts 路由契约与端点测试", () => {
     app = createApp(config, {
       cardStore: fakeCardStore,
       runManager: fakeRunManager,
+      chatEngine: new FakeChatEngine(fakeRunManager),
     });
   });
 

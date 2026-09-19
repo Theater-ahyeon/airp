@@ -6,13 +6,19 @@ interface SanitizeCallable {
 }
 
 function resolvePurifier(candidate: unknown): SanitizeCallable | null {
-  if (!candidate || typeof candidate !== "object") return null;
-  if ("sanitize" in candidate && typeof candidate.sanitize === "function") {
-    return candidate as SanitizeCallable;
+  // dompurify 的默认导出是可调用工厂（typeof === "function"，.sanitize 挂在实例上）。
+  // 旧代码只接受 object 形态，导致 DOMPurify 分支在**所有**环境（含真实浏览器）
+  // 都是死代码，永远走可绕过的正则 fallback——审查 M-7 升级缺陷，此处修复。
+  // node 无 window 时 dompurify 工厂无 .sanitize，仍按预期退回 fallback。
+  if (!candidate) return null;
+  if (typeof candidate === "function" || typeof candidate === "object") {
+    if ("sanitize" in candidate && typeof candidate.sanitize === "function") {
+      return candidate as SanitizeCallable;
+    }
   }
-  if ("default" in candidate && candidate.default && typeof candidate.default === "object") {
-    const inner = candidate.default;
-    if ("sanitize" in inner && typeof inner.sanitize === "function") {
+  if (candidate && typeof candidate === "object" && "default" in candidate) {
+    const inner = (candidate as { default?: unknown }).default;
+    if (inner && typeof inner === "object" && "sanitize" in inner && typeof inner.sanitize === "function") {
       return inner as SanitizeCallable;
     }
   }

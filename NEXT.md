@@ -127,10 +127,14 @@ updated: 2026-09-19
   - 涵盖极端重型卡片实测：`龙族remake：世界的重启.png`（453 条世界书条目、81.8 万字设定）、`蔚蓝星域二创.png`（122 条世界书、5253 字开场白）、`Living With Slaves.png`（112 条世界书）等；
   - 组装压力测试：453 条世界书超大卡在 8192 上下文预算下，单次组装仅耗时 **1.67ms**，预算截断与前缀哈希 100% 稳定运行；
 - **长程记忆召回评估套件**：`tests/stage5/memory-recall-eval.test.ts`（第 10 楼埋入事实，推进 50 楼至第 60 楼，结构化事实与长程摘要精准召回，滑动窗口安全截断，前缀哈希稳定）；
-- **性能预算与缓存感知复核**：`tests/stage5/performance-budget.test.ts`（单次组装延迟数毫秒远低于 300ms；前缀缓存命中率 ≥ 90%；9,800 楼快照冷启动重放耗时约 314ms 远低于 2000ms 上限）；
-- **安全检查表与韧性演练**：`tests/stage5/security-audit.test.ts`（API Key AES-256-GCM 密文落盘；DOMPurify XSS 消毒；`probe:e2e-kill` 11/11 验证生成中强杀断点恢复）；
-- **全量测试与构建**：全量 23 个测试文件 97 用例全绿；架构层三探针全绿；`pnpm check:isolation` 保持 Core 17 个文件绝对纯净；`pnpm build` strict 零错误；
+- **性能预算与缓存感知复核**：`tests/stage5/performance-budget.test.ts`（单次组装延迟数毫秒远低于 300ms；稳定前缀 token 占比 ≥ 90%——缓存命中必要条件，真实命中率需接入 provider usage.cacheRead；万楼快照冷启动重放为合成基准——手工构造快照绕过真实写入路径；新增 300 楼真实写入路径快照一致性测试）；
+- **安全检查表与韧性演练**：`tests/stage5/security-audit.test.ts`（API Key AES-256-GCM 密文落盘；DOMPurify XSS 消毒（jsdom 真路径实测，含 svg/实体编码/data: 向量）；`probe:e2e-kill` 11/11 验证生成中强杀断点恢复）；
+- **全量测试与构建**：全量 23 个测试文件 101 用例全绿；架构层三探针全绿；`pnpm check:isolation` 保持 Core 17 个文件绝对纯净；`pnpm build` strict 零错误；
 - **验收报告**：`docs/验收/阶段5-完成报告.md`。
+
+## 2026-09-19 对抗式审查 P0 修复
+
+对抗式审查暴露 ~50 条发现，P0 已全部修复并验证：数据完整性（C-1 快照 seq 吸收边界、H-2 链式回退收集、H-1/H-3 重放物理遗忘与摘要失效、M-4 原子写、M-5 会话互斥、H-5 单实例锁、H-6 readFrom 预检绕过）；引擎接线（H-4 ChatEngine 完整回合：组装→生成→楼层落地→管家，POST /api/runs 不再裸透传）；前端（H-9 静态托管 dist-ui + SPA 回退、M-6 SSE 命名事件、App.tsx 全量真实 API 改造、浏览器端到端验证）；测试诚实性（H-7/M-15 缓存断言改真实测量、M-7 XSS 测试切真 DOMPurify 路径并修复 resolvePurifier 全环境死代码缺陷）。报告：`docs/对抗式审查报告-2026-09-19.md`。
 
 ## 下一道门
 **蓝图全部阶段（0 至 5）已闭环完成，系统正式停在驾驶员验收（driver-acceptance）。**

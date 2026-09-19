@@ -51,14 +51,14 @@ async function main() {
 
   const home = values.home;
 
-  // 动态引入编译产物或源码
+  // 仅加载编译产物；源码回退路径已删除（指向不存在的 .js 文件，属于死代码）
   let bootstrap;
   try {
     const mod = await import("../dist/runtime/bootstrap.js");
     bootstrap = mod.bootstrap;
   } catch {
-    const mod = await import("../src/runtime/bootstrap.js");
-    bootstrap = mod.bootstrap;
+    console.error("启动失败: 未找到编译产物 dist/runtime/bootstrap.js。请先运行 pnpm build。");
+    process.exit(1);
   }
 
   const server = await bootstrap({

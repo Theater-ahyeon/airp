@@ -139,21 +139,12 @@ export class EventLog {
       const lines = content.split("\n");
       const events: RuntimeEvent[] = [];
 
-      // 如果 minSeq > 1 且文件行数很多，我们可避免反序列化早于 minSeq 的旧事件
+      // 如果 minSeq > 1，跳过早于 minSeq 的事件。
+      // 安全说明：必须 JSON.parse 后读取顶层 event.seq 判定，禁止行内正则预检——
+      // payload 内嵌的 "seq": 键会先于顶层 seq 出现，导致事件被静默丢弃（审查 H-6）。
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
-
-        // 极速探测 seq 字段："seq":123，若存在且小于 minSeq 则跳过 JSON.parse
-        if (minSeq > 1) {
-          const seqMatch = line.match(/"seq"\s*:\s*(\d+)/);
-          if (seqMatch) {
-            const approxSeq = Number.parseInt(seqMatch[1], 10);
-            if (approxSeq < minSeq) {
-              continue;
-            }
-          }
-        }
 
         try {
           const parsed = JSON.parse(line);

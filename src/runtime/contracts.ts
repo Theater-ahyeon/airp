@@ -69,7 +69,9 @@ export type RuntimeEventType =
   | "run_completed"
   | "run_cancelled"
   | "run_failed"
-  | "checkpoint";
+  | "checkpoint"
+  | "butler_extracted"
+  | "butler_degraded";
 
 export interface RuntimeEventBase {
   /** 会话内单调递增序号，由 EventLog 分配，从 1 开始，绝不重复。 */
@@ -184,6 +186,24 @@ export interface CheckpointEvent extends RuntimeEventBase {
   payload: { snapshotSeq: number; snapshotPath: string };
 }
 
+export interface ButlerExtractedEvent extends RuntimeEventBase {
+  type: "butler_extracted";
+  payload: {
+    floorId: string;
+    stateOpsCount: number;
+    summaryUpdated: boolean;
+    tokensUsed?: { input: number; output: number };
+  };
+}
+
+export interface ButlerDegradedEvent extends RuntimeEventBase {
+  type: "butler_degraded";
+  payload: {
+    floorId: string;
+    reason: string;
+  };
+}
+
 export type RuntimeEvent =
   | SessionCreatedEvent
   | FloorAppendedEvent
@@ -200,7 +220,9 @@ export type RuntimeEvent =
   | RunCompletedEvent
   | RunCancelledEvent
   | RunFailedEvent
-  | CheckpointEvent;
+  | CheckpointEvent
+  | ButlerExtractedEvent
+  | ButlerDegradedEvent;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -403,6 +425,22 @@ export interface StartRunInput {
   prompt: string;
   maxContextTokens?: number;
   maxOutputTokens?: number;
+  /**
+   * 组装完成的完整消息序列（含 system 前缀与历史）。
+   * 由 ChatEngine 通过 AssemblyPipeline 生成后传入；未提供时 RunManager
+   * 退回裸 prompt 单消息（仅用于底层测试与探针直连）。
+   */
+  messages?: ModelMessage[];
+}
+
+/** 会话级对话回合引擎：组装 → 生成 → 楼层落地 → 管家提取。 */
+export interface ChatEngineFacade {
+  /**
+   * 开始一个对话回合：追加用户楼层 → 组装上下文 → 启动 Run；
+   * Run 完成后自动追加助手楼层并触发管家提取（异步，失败显式降级事件）。
+   * 同一会话已有进行中的回合时抛出 TurnConflictError。
+   */
+  startTurn(input: StartRunInput): Promise<RunRecord>;
 }
 
 export interface RunEventSink {
@@ -427,11 +465,11 @@ export interface RunManagerFacade {
 
 // ---------------------------------------------------------------------------
 // 服务器配置（实现：src/runtime/server/**、src/runtime/credentials/**）
-// ---------------------------------------------------------------------------
-
 export interface ServerDeps {
   cardStore: CardStoreFacade;
   runManager: RunManagerFacade;
+  /** 对话回合引擎：POST /api/runs 的实际执行者。 */
+  chatEngine: ChatEngineFacade;
 }
 
 export interface ServerConfig {
@@ -441,6 +479,8 @@ export interface ServerConfig {
   host: "127.0.0.1";
   allowedOrigins: string[];
   airpHome: string;
+  /** 前端静态资源目录（dist-ui）。缺省时回退占位页。 */
+  staticDir?: string;
 }
 
 export interface CredentialStore {

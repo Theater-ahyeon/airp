@@ -4,6 +4,7 @@
 
 import net from "node:net";
 import path from "node:path";
+import fs from "node:fs";
 import type {
   ServerConfig,
   ServerDeps,
@@ -13,6 +14,8 @@ import type {
 import { CardStore } from "./card-store.js";
 import { RunManager } from "./session/run-manager.js";
 import { MockModelPort } from "./session/mock-port.js";
+import { ChatEngine } from "./session/chat-engine.js";
+import { MockModelAdapter } from "../core/adapters/mock-model.js";
 import { EncryptedFileCredentialStore, probeOsKeychain } from "./credentials/key-store.js";
 import { generateStartToken } from "./server/security.js";
 import { startServer } from "./server/launch.js";
@@ -24,6 +27,8 @@ export interface BootstrapOptions {
   port?: number; // 默认 0 或约定默认端口
   snapshotInterval?: number;
   modelPort?: ModelStreamPort; // 注入用；默认用 session 层的假模型端口
+  /** 前端静态资源目录（dist-ui）。默认 <repo>/dist-ui 存在时启用。 */
+  staticDir?: string;
 }
 
 export interface BootstrapResult {
@@ -61,22 +66,51 @@ async function findAvailablePort(): Promise<number> {
   });
   return promise;
 }
-
-/**
- * 装配并启动 AIRP 本地服务。
- */
 export async function bootstrap(options?: BootstrapOptions): Promise<BootstrapResult> {
   const airpHome = options?.home ? path.resolve(options.home) : resolveAirpHome();
   const token = generateStartToken();
 
+  // 前端静态目录：显式指定优先；否则 dist-ui 存在时启用（相对 CWD 解析）
+  let staticDir = options?.staticDir ? path.resolve(options.staticDir) : undefined;
+  if (!staticDir) {
+    const defaultDir = path.resolve(process.cwd(), "dist-ui");
+    staticDir = fs.existsSync(defaultDir) ? defaultDir : undefined;
+  }
+  // H-5：单实例锁。同一 AIRP_HOME 并发第二实例会造成 JSONL 交错写损坏。
+  // 锁文件内容为持有者 pid；检测到存活持有者（ESRCH 之外的任何信号探测结果，
+  // EPERM 也算存活）时拒绝启动。陈旧锁（持有者已死）自动接管。
+  const lockPath = path.join(airpHome, ".lock");
+  await fs.promises.mkdir(airpHome, { recursive: true });
+  try {
+    const prevPidRaw = await fs.promises.readFile(lockPath, "utf-8");
+    const prevPid = Number(prevPidRaw.trim());
+    if (Number.isInteger(prevPid) && prevPid > 0 && prevPid !== process.pid) {
+      let alive = true;
+      try {
+        process.kill(prevPid, 0);
+      } catch (err) {
+        alive = !((err as NodeJS.ErrnoException).code === "ESRCH");
+      }
+      if (alive) {
+        throw new Error(
+          `AIRP home 已被进程 ${prevPid} 占用（${lockPath}）。同一数据目录禁止并发实例；如确认持有者已退出，删除锁文件后重试。`
+        );
+      }
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  await fs.promises.writeFile(lockPath, String(process.pid), "utf-8");
+
   // 1. 初始化凭据存储
   const keychainBackend = await probeOsKeychain();
   const credentials = new EncryptedFileCredentialStore(airpHome, keychainBackend);
-
-  // 2. 初始化持久化存储与会话管理器（真实依赖，非 fake）
   const cardStore = new CardStore(airpHome, options?.snapshotInterval);
   const modelPort = options?.modelPort ?? new MockModelPort();
   const runManager = new RunManager(cardStore, modelPort);
+  // 管家运行器：与主端口共享 MockModelAdapter（测试可注入 enqueue 响应）
+  const butlerRunnerModel = new MockModelAdapter();
+  const chatEngine = new ChatEngine(cardStore, runManager, modelPort, butlerRunnerModel);
 
   // 启动时恢复未完成的 Run
   await runManager.recoverOnBoot();
@@ -84,6 +118,7 @@ export async function bootstrap(options?: BootstrapOptions): Promise<BootstrapRe
   const deps: ServerDeps = {
     cardStore,
     runManager,
+    chatEngine,
   };
 
   // 3. 确定起始端口：如果 options?.port 未指定或为 0，先获取一个动态可用端口
@@ -118,6 +153,7 @@ export async function bootstrap(options?: BootstrapOptions): Promise<BootstrapRe
       host: "127.0.0.1",
       allowedOrigins,
       airpHome,
+      staticDir,
     };
 
     try {
@@ -156,7 +192,6 @@ export async function bootstrap(options?: BootstrapOptions): Promise<BootstrapRe
   if (!serverInstance) {
     throw lastError ?? new Error(`Failed to bind server starting from port ${initialPort}`);
   }
-
   const finalConfig: ServerConfig = {
     token,
     port: boundPort,
@@ -166,6 +201,7 @@ export async function bootstrap(options?: BootstrapOptions): Promise<BootstrapRe
       `http://localhost:${boundPort}`,
     ],
     airpHome,
+    staticDir,
   };
 
   let closed = false;
@@ -177,6 +213,15 @@ export async function bootstrap(options?: BootstrapOptions): Promise<BootstrapRe
     if (serverInstance) {
       await serverInstance.close();
       serverInstance = null;
+    }
+    // 释放单实例锁（仅当锁仍归本进程持有时）
+    try {
+      const current = await fs.promises.readFile(lockPath, "utf-8");
+      if (Number(current.trim()) === process.pid) {
+        await fs.promises.unlink(lockPath);
+      }
+    } catch {
+      // 锁不存在或已被接管——无需处理
     }
   };
 

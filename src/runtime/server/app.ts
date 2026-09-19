@@ -3,6 +3,9 @@
 
 import { Hono } from "hono";
 import { z } from "zod";
+import path from "node:path";
+import fs from "node:fs";
+import { serveStatic as createNodeStatic } from "@hono/node-server/serve-static";
 import {
   RUNTIME_SCHEMA_VERSION,
   type ServerConfig,
@@ -43,6 +46,23 @@ const StartRunSchema = z.object({
   maxOutputTokens: z.number().int().positive().optional(),
 });
 
+const AppendFloorSchema = z.object({
+  role: z.enum(["user", "assistant", "system"]),
+  content: z.string().min(1),
+  parentId: z.string().nullable().optional(),
+});
+
+const SwipeFloorSchema = z.object({
+  content: z.string().min(1),
+});
+
+const EditFloorSchema = z.object({
+  content: z.string().min(1),
+});
+
+const RollbackSchema = z.object({
+  toFloorId: z.string().min(1),
+});
 /**
  * 构造 AIRP Hono 实例。
  */
@@ -50,10 +70,31 @@ export function createApp(config: ServerConfig, deps: ServerDeps): Hono {
   const app = new Hono();
   const startedAt = Date.now();
 
-  // 极简占位 HTML 页面，说明启动令牌用途，禁止内联真实密钥
-  app.get("/", (c) => {
-    return c.html(
-      `<!DOCTYPE html>
+  // 静态前端托管（H-9）：staticDir 存在时托管 dist-ui，SPA 路由回退 index.html。
+  // 无 staticDir 时保留说明占位页。
+  const staticDir = config.staticDir;
+  if (staticDir) {
+    const serveStatic = createNodeStatic({ root: staticDir });
+    app.use("*", async (c, next) => {
+      // 静态资源仅服务非 /api 路径；/api 交给后续路由
+      if (c.req.path.startsWith("/api/")) {
+        return next();
+      }
+      const res = await serveStatic(c, next);
+      if (res) return res;
+      // SPA 回退：未命中静态文件且非 /api → index.html
+      const indexPath = path.join(staticDir, "index.html");
+      try {
+        const html = await fs.promises.readFile(indexPath, "utf-8");
+        return c.html(html);
+      } catch {
+        return next();
+      }
+    });
+  } else {
+    app.get("/", (c) => {
+      return c.html(
+        `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -70,8 +111,9 @@ export function createApp(config: ServerConfig, deps: ServerDeps): Hono {
   <p><em>安全提示：启动令牌仅限本机进程使用，切勿泄露或分享给第三方。</em></p>
 </body>
 </html>`
-    );
-  });
+      );
+    });
+  }
 
   // 全局 404 处理
   app.notFound((c) => {
@@ -248,7 +290,7 @@ export function createApp(config: ServerConfig, deps: ServerDeps): Hono {
     }
   });
 
-  // POST /api/runs
+  // POST /api/runs —— 走 ChatEngine 完整回合（组装→生成→落地→管家）
   app.post("/api/runs", async (c) => {
     let body: unknown;
     try {
@@ -263,9 +305,12 @@ export function createApp(config: ServerConfig, deps: ServerDeps): Hono {
     }
 
     try {
-      const runRecord = await deps.runManager.startRun(parsed.data as StartRunInput);
+      const runRecord = await deps.chatEngine.startTurn(parsed.data as StartRunInput);
       return c.json({ run: runRecord }, 202);
     } catch (err) {
+      if (err instanceof Error && err.name === "TurnConflictError") {
+        return c.json({ error: "A turn is already in progress for this session" }, 409);
+      }
       console.error("Failed to start run:", err);
       return c.json({ error: "Internal Server Error" }, 500);
     }
@@ -300,6 +345,146 @@ export function createApp(config: ServerConfig, deps: ServerDeps): Hono {
 
   // GET /api/runs/:runId/events (SSE)
   app.get("/api/runs/:runId/events", handleRunEventsSSE(deps.runManager));
+
+  // GET /api/sessions?cardId=... —— 列出卡片全部会话
+  app.get("/api/sessions", async (c) => {
+    const cardId = c.req.query("cardId");
+    if (!cardId || cardId.trim().length === 0) {
+      return c.json({ error: "Missing required query parameter: cardId" }, 400);
+    }
+    try {
+      const sessions = await deps.cardStore.listSessions(cardId);
+      return c.json({ sessions }, 200);
+    } catch (err) {
+      console.error("Failed to list sessions:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // POST /api/sessions/:sessionId/floors —— 追加楼层（用户手动编辑或外部注入）
+  app.post("/api/sessions/:sessionId/floors", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const cardId = c.req.query("cardId");
+    if (!cardId) {
+      return c.json({ error: "Missing required query parameter: cardId" }, 400);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const parsed = AppendFloorSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.message }, 400);
+    }
+    try {
+      const ev = await deps.cardStore.appendFloor(cardId, sessionId, parsed.data);
+      return c.json({ event: ev }, 201);
+    } catch (err) {
+      console.error("Failed to append floor:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // POST /api/sessions/:sessionId/floors/:floorId/swipe —— 重掷该楼
+  app.post("/api/sessions/:sessionId/floors/:floorId/swipe", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const floorId = c.req.param("floorId");
+    const cardId = c.req.query("cardId");
+    if (!cardId) {
+      return c.json({ error: "Missing required query parameter: cardId" }, 400);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const parsed = SwipeFloorSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.message }, 400);
+    }
+    try {
+      const ev = await deps.cardStore.swipeFloor(cardId, sessionId, { floorId, content: parsed.data.content });
+      return c.json({ event: ev }, 201);
+    } catch (err) {
+      console.error("Failed to swipe floor:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // POST /api/sessions/:sessionId/floors/:floorId/edit —— 编辑楼内容
+  app.post("/api/sessions/:sessionId/floors/:floorId/edit", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const floorId = c.req.param("floorId");
+    const cardId = c.req.query("cardId");
+    if (!cardId) {
+      return c.json({ error: "Missing required query parameter: cardId" }, 400);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const parsed = EditFloorSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.message }, 400);
+    }
+    try {
+      const ev = await deps.cardStore.editFloor(cardId, sessionId, { floorId, content: parsed.data.content });
+      return c.json({ event: ev }, 201);
+    } catch (err) {
+      console.error("Failed to edit floor:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // POST /api/sessions/:sessionId/rollback —— 回退到指定楼
+  app.post("/api/sessions/:sessionId/rollback", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const cardId = c.req.query("cardId");
+    if (!cardId) {
+      return c.json({ error: "Missing required query parameter: cardId" }, 400);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const parsed = RollbackSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.message }, 400);
+    }
+    try {
+      const ev = await deps.cardStore.rollback(cardId, sessionId, parsed.data.toFloorId);
+      return c.json({ event: ev }, 201);
+    } catch (err) {
+      console.error("Failed to rollback:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
+
+  // POST /api/sessions/:sessionId/undo-rollback —— 撤销最近回退
+  app.post("/api/sessions/:sessionId/undo-rollback", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const cardId = c.req.query("cardId");
+    if (!cardId) {
+      return c.json({ error: "Missing required query parameter: cardId" }, 400);
+    }
+    try {
+      const ev = await deps.cardStore.undoRollback(cardId, sessionId);
+      return c.json({ event: ev }, 201);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("No rollback event found")) {
+        return c.json({ error: "No rollback event found to undo" }, 409);
+      }
+      console.error("Failed to undo rollback:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
 
   return app;
 }

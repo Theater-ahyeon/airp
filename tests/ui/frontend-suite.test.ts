@@ -26,7 +26,12 @@ describe("Stage 4 Frontend Quality & Security Test Suite", () => {
   it("2. 断线重连与 seq 续传断言：确保客户端按 fromSeq 续订", () => {
     let requestedUrl = "";
     const mockGlobal = globalThis as unknown as {
-      EventSource: new (url: string) => { onmessage: unknown; onerror: unknown; close: () => void };
+      EventSource: new (url: string) => {
+        onmessage: unknown;
+        onerror: unknown;
+        addEventListener: (name: string, cb: (msg: { data: string }) => void) => void;
+        close: () => void;
+      };
     };
 
     const originalEventSource = mockGlobal.EventSource;
@@ -34,8 +39,12 @@ describe("Stage 4 Frontend Quality & Security Test Suite", () => {
     mockGlobal.EventSource = class MockEventSource {
       onmessage: unknown = null;
       onerror: unknown = null;
+      addEventListener: (name: string, cb: (msg: { data: string }) => void) => void;
+
       constructor(url: string) {
         requestedUrl = url;
+        // 真实 EventSource 契约：按命名事件注册（M-6 后客户端不再用 onmessage）
+        this.addEventListener = (_name: string, _cb: (msg: { data: string }) => void) => {};
       }
       close() {}
     };

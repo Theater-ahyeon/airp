@@ -9,7 +9,10 @@
     "airp": "./bin/airp.mjs"
   },
   "scripts": {
-    "build": "tsc -b",
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "start": "node bin/airp.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "check:isolation": "node scripts/check-core-isolation.mjs",
@@ -24,12 +27,12 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "jsdom": "^26.0.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "5.7.3",
     "vite": "^6.2.0",
-    "vitest": "3.0.7",
-    "zod": "^3.25.0"
+    "vitest": "3.0.7"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.85.1",
@@ -37,9 +40,8 @@
     "@tanstack/react-virtual": "^3.13.2",
     "dompurify": "^3.2.4",
     "hono": "^4.13.8",
-    "lucide-react": "^0.475.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "zustand": "^5.0.3"
+    "zod": "^3.25.0"
   }
 }

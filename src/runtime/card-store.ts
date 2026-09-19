@@ -43,7 +43,7 @@ import {
   snapshotsDir,
   assertSafeId
 } from "./paths.js";
-import { ensureDir, writeJsonAtomic, readJson } from "./fs-atomic.js";
+import { ensureDir, writeJsonAtomic, writeAtomic, readJson } from "./fs-atomic.js";
 import { EventLog } from "./event-log.js";
 import { SnapshotStore } from "./snapshot-store.js";
 import { migrateCard } from "./migrations.js";
@@ -59,10 +59,26 @@ export class CardStore implements CardStoreFacade {
   private readonly snapshotInterval: number;
   /** 会话对应的 EventLog 缓存映射 */
   private readonly eventLogs = new Map<string, EventLog>();
+  /**
+   * 会话级互斥队列：读改写操作（append/swipe/edit/rollback/undo）必须整体串行，
+   * 防止并发 replay+append 产生重复 floorIndex（审查 M-5）。
+   * 注意：createCheckpointInternal 不得获取该锁——快照触发点位于 appendFloor
+   * 持锁期间的 EventLog.append 回调链上，重入会死锁；其一致性由
+   * checkpoint.seq=吸收边界语义保证（见 createCheckpointInternal）。
+   */
+  private readonly sessionLocks = new Map<string, Promise<void>>();
 
   constructor(customHome?: string, snapshotInterval = DEFAULT_SNAPSHOT_INTERVAL) {
     this.home = customHome ? path.resolve(customHome) : resolveAirpHome();
     this.snapshotInterval = snapshotInterval;
+  }
+
+  /** 会话级串行任务执行器（与 EventLog 内部互斥独立，嵌套调用会死锁） */
+  private runSessionExclusive<T>(cardId: string, sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const key = this.getSessionKey(cardId, sessionId);
+    const next = (this.sessionLocks.get(key) ?? Promise.resolve()).then(fn, fn);
+    this.sessionLocks.set(key, next.then(() => {}, () => {}));
+    return next;
   }
 
   private getSessionKey(cardId: string, sessionId: string): string {
@@ -96,18 +112,26 @@ export class CardStore implements CardStoreFacade {
     const dir = snapshotsDir(this.home, cardId, sessionId);
     return new SnapshotStore(dir);
   }
-
   /**
-   * 触发生成快照并持久化到 snapshot-store
+   * 触发生成快照并持久化到 snapshot-store。
+   *
+   * C-1 修复：checkpoint.seq 必须等于重放树**实际吸收**的最大事件 seq
+   * （replayedEvents 最后一条的 seq），而不是事件日志的最新 lastSeq。
+   * 后者在"快照重放期间并发 append"窗口内会大于树吸收边界，导致下一轮
+   * replay 从 seq+1 起读、跳过未吸收事件——永久静默丢失。
+   * 取吸收边界后，任何交错下快照与日志一致；未被吸收的事件下一轮重读（幂等）。
    */
   private async createCheckpointInternal(cardId: string, sessionId: string): Promise<SessionCheckpoint> {
     const replayRes = await this.replay(cardId, sessionId);
+    const absorbedSeq = replayRes.replayedEvents.length > 0
+      ? replayRes.replayedEvents[replayRes.replayedEvents.length - 1].seq
+      : replayRes.fromCheckpointSeq ?? 0;
     const snapStore = this.getSnapshotStore(cardId, sessionId);
     const checkpoint: SessionCheckpoint = {
       schemaVersion: RUNTIME_SCHEMA_VERSION,
       cardId,
       sessionId,
-      seq: replayRes.lastSeq,
+      seq: absorbedSeq,
       createdAt: Date.now(),
       tree: replayRes.tree,
       state: replayRes.state,
@@ -281,47 +305,50 @@ export class CardStore implements CardStoreFacade {
     sessionId: string,
     input: { role: Role; content: string; parentId?: string | null }
   ): Promise<FloorAppendedEvent> {
-    const replayState = await this.replay(cardId, sessionId);
-    const tree = replayState.tree;
+    // M-5：replay→append 读改写必须整体持会话锁，否则并发追加产生重复 floorIndex
+    return this.runSessionExclusive(cardId, sessionId, async () => {
+      const replayState = await this.replay(cardId, sessionId);
+      const tree = replayState.tree;
 
-    // 当 parentId 为空或未传递时，挂载在当前活跃分支的末尾
-    let resolvedParentId: string | null = null;
-    if (input.parentId !== undefined) {
-      resolvedParentId = input.parentId;
-    } else {
-      // 寻找当前活跃分支的最大 floorIndex 楼层
-      let latestInBranch: FloorMessage | null = null;
-      for (const floor of Object.values(tree.floors)) {
-        if (floor.branchId === tree.activeBranchId) {
-          if (!latestInBranch || floor.floorIndex > latestInBranch.floorIndex) {
-            latestInBranch = floor;
+      // 当 parentId 为空或未传递时，挂载在当前活跃分支的末尾
+      let resolvedParentId: string | null = null;
+      if (input.parentId !== undefined) {
+        resolvedParentId = input.parentId;
+      } else {
+        // 寻找当前活跃分支的最大 floorIndex 楼层
+        let latestInBranch: FloorMessage | null = null;
+        for (const floor of Object.values(tree.floors)) {
+          if (floor.branchId === tree.activeBranchId) {
+            if (!latestInBranch || floor.floorIndex > latestInBranch.floorIndex) {
+              latestInBranch = floor;
+            }
           }
         }
+        resolvedParentId = latestInBranch ? latestInBranch.id : null;
       }
-      resolvedParentId = latestInBranch ? latestInBranch.id : null;
-    }
 
-    const parentFloor = resolvedParentId ? tree.floors[resolvedParentId] : null;
-    const floorIndex = parentFloor ? parentFloor.floorIndex + 1 : 1;
-    const floorId = `floor_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+      const parentFloor = resolvedParentId ? tree.floors[resolvedParentId] : null;
+      const floorIndex = parentFloor ? parentFloor.floorIndex + 1 : 1;
+      const floorId = `floor_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
 
-    const draft: RuntimeEventDraft = {
-      type: "floor_appended",
-      cardId,
-      sessionId,
-      ts: Date.now(),
-      payload: {
-        floorId,
-        parentId: resolvedParentId,
-        branchId: tree.activeBranchId || "main",
-        floorIndex,
-        role: input.role,
-        content: input.content
-      }
-    };
+      const draft: RuntimeEventDraft = {
+        type: "floor_appended",
+        cardId,
+        sessionId,
+        ts: Date.now(),
+        payload: {
+          floorId,
+          parentId: resolvedParentId,
+          branchId: tree.activeBranchId || "main",
+          floorIndex,
+          role: input.role,
+          content: input.content
+        }
+      };
 
-    const event = await this.appendEvent(cardId, sessionId, draft);
-    return event as FloorAppendedEvent;
+      const event = await this.appendEvent(cardId, sessionId, draft);
+      return event as FloorAppendedEvent;
+    });
   }
 
   async swipeFloor(
@@ -329,27 +356,29 @@ export class CardStore implements CardStoreFacade {
     sessionId: string,
     input: { floorId: string; content: string }
   ): Promise<FloorSwipedEvent> {
-    const replayState = await this.replay(cardId, sessionId);
-    const floor = replayState.tree.floors[input.floorId];
-    if (!floor) {
-      throw new Error(`Floor not found: ${input.floorId}`);
-    }
-
-    const nextSwipeIndex = floor.swipes.length;
-    const draft: RuntimeEventDraft = {
-      type: "floor_swiped",
-      cardId,
-      sessionId,
-      ts: Date.now(),
-      payload: {
-        floorId: input.floorId,
-        swipeIndex: nextSwipeIndex,
-        content: input.content
+    return this.runSessionExclusive(cardId, sessionId, async () => {
+      const replayState = await this.replay(cardId, sessionId);
+      const floor = replayState.tree.floors[input.floorId];
+      if (!floor) {
+        throw new Error(`Floor not found: ${input.floorId}`);
       }
-    };
 
-    const event = await this.appendEvent(cardId, sessionId, draft);
-    return event as FloorSwipedEvent;
+      const nextSwipeIndex = floor.swipes.length;
+      const draft: RuntimeEventDraft = {
+        type: "floor_swiped",
+        cardId,
+        sessionId,
+        ts: Date.now(),
+        payload: {
+          floorId: input.floorId,
+          swipeIndex: nextSwipeIndex,
+          content: input.content
+        }
+      };
+
+      const event = await this.appendEvent(cardId, sessionId, draft);
+      return event as FloorSwipedEvent;
+    });
   }
 
   async editFloor(
@@ -357,61 +386,73 @@ export class CardStore implements CardStoreFacade {
     sessionId: string,
     input: { floorId: string; content: string }
   ): Promise<FloorEditedEvent> {
-    const replayState = await this.replay(cardId, sessionId);
-    const floor = replayState.tree.floors[input.floorId];
-    if (!floor) {
-      throw new Error(`Floor not found: ${input.floorId}`);
-    }
-
-    const draft: RuntimeEventDraft = {
-      type: "floor_edited",
-      cardId,
-      sessionId,
-      ts: Date.now(),
-      payload: {
-        floorId: input.floorId,
-        content: input.content,
-        previousContent: floor.content
+    return this.runSessionExclusive(cardId, sessionId, async () => {
+      const replayState = await this.replay(cardId, sessionId);
+      const floor = replayState.tree.floors[input.floorId];
+      if (!floor) {
+        throw new Error(`Floor not found: ${input.floorId}`);
       }
-    };
 
-    const event = await this.appendEvent(cardId, sessionId, draft);
-    return event as FloorEditedEvent;
+      const draft: RuntimeEventDraft = {
+        type: "floor_edited",
+        cardId,
+        sessionId,
+        ts: Date.now(),
+        payload: {
+          floorId: input.floorId,
+          content: input.content,
+          previousContent: floor.content
+        }
+      };
+
+      const event = await this.appendEvent(cardId, sessionId, draft);
+      return event as FloorEditedEvent;
+    });
   }
 
   async rollback(cardId: string, sessionId: string, toFloorId: string): Promise<RollbackEvent> {
-    const replayState = await this.replay(cardId, sessionId);
-    const targetFloor = replayState.tree.floors[toFloorId];
-    if (!targetFloor) {
-      throw new Error(`Floor not found for rollback: ${toFloorId}`);
-    }
-
-    // 收集所有被遗忘的楼层 ID（比目标楼层 floorIndex 更大的所有楼层）
-    const forgottenFloorIds: string[] = [];
-    for (const floor of Object.values(replayState.tree.floors)) {
-      if (floor.floorIndex > targetFloor.floorIndex) {
-        forgottenFloorIds.push(floor.id);
+    return this.runSessionExclusive(cardId, sessionId, async () => {
+      const replayState = await this.replay(cardId, sessionId);
+      const targetFloor = replayState.tree.floors[toFloorId];
+      if (!targetFloor) {
+        throw new Error(`Floor not found for rollback: ${toFloorId}`);
       }
-    }
 
-    const draft: RuntimeEventDraft = {
-      type: "rollback",
-      cardId,
-      sessionId,
-      ts: Date.now(),
-      payload: {
-        toFloorId,
-        forgottenFloorIds
+      // H-2 修复：只遗忘目标楼层在**同一分支**上的后代（沿 parentId 链向下收集）。
+      // 旧实现按全局 floorIndex > target 收集，会把其它分支的楼层整链误删。
+      // 其它分支（branchId 不同）不是本分支路径的后代，予以保留。
+      const forgottenFloorIds: string[] = [];
+      const queue: string[] = [toFloorId];
+      while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        for (const floor of Object.values(replayState.tree.floors)) {
+          if (floor.parentId === currentId && floor.branchId === targetFloor.branchId) {
+            forgottenFloorIds.push(floor.id);
+            queue.push(floor.id);
+          }
+        }
       }
-    };
 
-    const event = await this.appendEvent(cardId, sessionId, draft);
-    return event as RollbackEvent;
+      const draft: RuntimeEventDraft = {
+        type: "rollback",
+        cardId,
+        sessionId,
+        ts: Date.now(),
+        payload: {
+          toFloorId,
+          forgottenFloorIds
+        }
+      };
+
+      const event = await this.appendEvent(cardId, sessionId, draft);
+      return event as RollbackEvent;
+    });
   }
 
   async undoRollback(cardId: string, sessionId: string): Promise<UndoRollbackEvent> {
-    const log = this.getEventLog(cardId, sessionId);
-    const allEvents = await log.readAll();
+    return this.runSessionExclusive(cardId, sessionId, async () => {
+      const log = this.getEventLog(cardId, sessionId);
+      const allEvents = await log.readAll();
 
     // 从头重放事件日志（不使用快照）建立参照状态，精确计算最后一次 rollback 遗忘的楼层
     const tempTree: SerializedFloorTree = {
@@ -464,8 +505,9 @@ export class CardStore implements CardStoreFacade {
       }
     };
 
-    const event = await this.appendEvent(cardId, sessionId, draft);
-    return event as UndoRollbackEvent;
+      const event = await this.appendEvent(cardId, sessionId, draft);
+      return event as UndoRollbackEvent;
+    });
   }
 
   async applyStateOp(
@@ -568,7 +610,7 @@ export class CardStore implements CardStoreFacade {
   private applyEventToMemory(
     tree: SerializedFloorTree,
     state: StateSnapshot,
-    setSummary: (s: string) => void,
+    setSummary: (s: string | null) => void,
     ev: RuntimeEvent
   ): void {
     switch (ev.type) {
@@ -636,16 +678,18 @@ export class CardStore implements CardStoreFacade {
       }
       case "rollback": {
         const p = ev.payload;
-        // 记录最新楼层作为 undoCheckpointFloorId
+        // 记录被遗忘楼层中 floorIndex 最深者作为 undoCheckpointFloorId
+        // （旧实现取全局最大 floorIndex，可能指向其它分支的楼层——H-2 关联修正）
         let maxIndex = -1;
-        let latestId: string | null = null;
-        for (const f of Object.values(tree.floors)) {
-          if (f.floorIndex > maxIndex) {
+        let deepestId: string | null = null;
+        for (const fId of p.forgottenFloorIds) {
+          const f = tree.floors[fId];
+          if (f && f.floorIndex > maxIndex) {
             maxIndex = f.floorIndex;
-            latestId = f.id;
+            deepestId = f.id;
           }
         }
-        tree.undoCheckpointFloorId = latestId;
+        tree.undoCheckpointFloorId = deepestId;
 
         // 物理遗忘对应楼层
         for (const fId of p.forgottenFloorIds) {
@@ -677,6 +721,11 @@ export class CardStore implements CardStoreFacade {
         break;
       }
       case "state_op": {
+        // H-1 修复：物理遗忘——op 所属楼层已被 rollback 删除时，其状态变更不得存活。
+        // （旧实现无条件 apply，回退后被遗忘楼层的状态仍进入投影与组装。）
+        if (ev.payload.op.floorId && !tree.floors[ev.payload.op.floorId]) {
+          break;
+        }
         const nextState = applyStateOp(state, ev.payload.op);
         // 清空原对象并复制新键值
         for (const k of Object.keys(state)) {
@@ -686,9 +735,18 @@ export class CardStore implements CardStoreFacade {
         break;
       }
       case "summary_updated": {
+        // H-3 修复：摘要锚定楼（upToFloorId）已被遗忘时，摘要随之失效置空，
+        // 防止被回退掉的"未来剧情"经摘要重新进入组装。
+        if (ev.payload.upToFloorId && !tree.floors[ev.payload.upToFloorId]) {
+          setSummary(null);
+          break;
+        }
         setSummary(ev.payload.summary);
         break;
       }
+      // 管家事件与 run_* 事件只记录过程，重放时不改变投影
+      case "butler_extracted":
+      case "butler_degraded":
       case "run_created":
       case "run_started":
       case "run_delta":
@@ -785,7 +843,9 @@ export class CardStore implements CardStoreFacade {
       }
 
       if (content.length > 0) {
-        await fs.writeFile(evPath, content, "utf-8");
+        // M-4：事件日志写入必须原子化——fs.writeFile 中途崩溃会留下半行 JSONL，
+        // 重放时整文件损坏。writeAtomic 走 temp+rename，读者永远看到完整文件。
+        await writeAtomic(evPath, content);
       }
     }
 
