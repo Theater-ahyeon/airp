@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="loomLightGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="50%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+    <linearGradient id="coreLightGlow" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3B82F6" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+
+  <!-- 纯白底色带微细轻边框 -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#FFFFFF" stroke="#E5E5E5" stroke-width="1.5" />
+
+  <!-- 记忆经纬线（双环交织，深蓝与青绿高对比） -->
+  <path d="M 14 32 C 23 19, 41 19, 50 32 C 41 45, 23 45, 14 32 Z" 
+        fill="none" stroke="url(#loomLightGrad)" stroke-width="3" stroke-linecap="round" />
+  
+  <path d="M 32 14 C 19 23, 19 41, 32 50 C 45 41, 45 23, 32 14 Z" 
+        fill="none" stroke="url(#coreLightGlow)" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 3" />
+
+  <!-- 核心记忆水晶原点 -->
+  <circle cx="32" cy="32" r="5" fill="#0D0D0D" />
+  <circle cx="32" cy="32" r="2.5" fill="#FFFFFF" />
+
+  <!-- 四极锚点 -->
+  <circle cx="32" cy="19" r="1.8" fill="#0284C7" />
+  <circle cx="32" cy="45" r="1.8" fill="#059669" />
+  <circle cx="19" cy="32" r="1.8" fill="#4F46E5" />
+  <circle cx="45" cy="32" r="1.8" fill="#2563EB" />
+</svg>
