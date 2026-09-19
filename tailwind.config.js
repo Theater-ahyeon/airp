@@ -7,6 +7,14 @@ export default {
   theme: {
     extend: {
       colors: {
+        primary: "#111827",
+        secondary: "#4B5563",
+        "muted-body": "#374151",
+        "surface-canvas": "#FFFFFF",
+        "surface-sub": "#F9FAFB",
+        "surface-inset": "#F3F4F6",
+        "border-hairline": "#E5E7EB",
+        "accent-mono": "#047857",
         cg: {
           bgMain: '#FFFFFF',
           bgSidebar: '#F9F9F9',
@@ -25,8 +33,8 @@ export default {
         }
       },
       fontFamily: {
-        sans: ['Söhne', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'PingFang SC', 'sans-serif'],
-        mono: ['Söhne Mono', 'JetBrains Mono', 'Menlo', 'monospace'],
+        sans: ['Geist', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'PingFang SC', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Menlo', 'monospace'],
       },
     },
   },
