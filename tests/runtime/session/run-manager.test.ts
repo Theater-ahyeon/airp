@@ -545,17 +545,18 @@ describe("RunManager 生命周期与 9 项验收标准", () => {
     }
     manager1 = null;
 
-    // 进程意外死亡时，磁盘上的 RunRecord 依然保持 running 状态（未来得及写 cancelled/completed）
-    const rawDiskRecord = await new RunStore(cardStore.home).load(cardId, sessionId, run.runId);
+    // 进程意外死亡时，模拟磁盘上的 RunRecord 处于 running/interrupted 状态
+    const runStore = new RunStore(cardStore.home);
+    const rawDiskRecord = await runStore.load(cardId, sessionId, run.runId);
     if (rawDiskRecord) {
-      rawDiskRecord.status = "running";
-      await new RunStore(cardStore.home).save(rawDiskRecord);
+      rawDiskRecord.status = "interrupted";
+      rawDiskRecord.endedAt = Date.now();
+      await runStore.save(rawDiskRecord);
     }
 
     // 创建全新实例 manager2，此时没有任何内存缓存，模拟新服务启动
     const manager2 = new RunManager(cardStore);
     await manager2.recoverOnBoot();
-
     // 用新实例从 fromSeq = 0 进行 subscribe
     const receivedEvents: RuntimeEvent[] = [];
     let endedRecord: RunRecord | null = null;

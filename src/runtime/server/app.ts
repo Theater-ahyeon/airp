@@ -306,6 +306,20 @@ export function createApp(config: ServerConfig, deps: ServerDeps): Hono {
     }
   });
 
+  // 兼容别名：GET /api/cards/:cardId/st-original
+  app.get("/api/cards/:cardId/st-original", async (c) => {
+    const cardId = c.req.param("cardId");
+    try {
+      const original = await deps.cardStore.readStOriginal(cardId);
+      if (original === null) {
+        return c.json({ error: `Card has no ST original: ${cardId}` }, 404);
+      }
+      return c.json(original, 200);
+    } catch (err) {
+      console.error("Failed to read ST original:", err);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  });
   // GET /api/cards/:cardId/st/compat —— 字段级兼容报告
   app.get("/api/cards/:cardId/st/compat", async (c) => {
     const cardId = c.req.param("cardId");
